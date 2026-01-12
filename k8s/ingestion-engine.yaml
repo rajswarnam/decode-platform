@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-engine
+  namespace: decode-app
+  labels:
+    app: ingestion-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ingestion-engine
+  template:
+    metadata:
+      labels:
+        app: ingestion-engine
+    spec:
+      containers:
+      - name: ingestion-engine
+        image: ingestion-engine:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion-engine
+  namespace: decode-app
+spec:
+  selector:
+    app: ingestion-engine
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080

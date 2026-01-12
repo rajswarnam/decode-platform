@@ -1,0 +1,99 @@
+                                <button onClick={loadBlueprints} style={{ background: 'rgba(255,255,255,0.03)', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '10px', borderRadius: '12px', transition: 'all 0.2s' }} title="View Saved Blueprints">
+                                    <FileText size={20} />
+                                </button>
+                                <button style={{ background: 'rgba(255,255,255,0.03)', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '10px', borderRadius: '12px' }}>
+                                    <Settings size={20} />
+                                </button>
+                            </div>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Saved Blueprints Modal */}
+            <AnimatePresence>
+                {showBlueprints && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        style={{
+                            position: 'fixed',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            background: 'rgba(0,0,0,0.8)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            zIndex: 2000,
+                            padding: '40px'
+                        }}
+                        onClick={() => setShowBlueprints(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, y: 20 }}
+                            animate={{ scale: 1, y: 0 }}
+                            exit={{ scale: 0.9, y: 20 }}
+                            onClick={(e) => e.stopPropagation()}
+                            style={{
+                                background: '#111422',
+                                border: '1px solid #23273a',
+                                borderRadius: '24px',
+                                padding: '32px',
+                                maxWidth: '800px',
+                                width: '100%',
+                                maxHeight: '80vh',
+                                overflow: 'auto'
+                            }}
+                        >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                                <h2 style={{ margin: 0, color: '#fff', fontSize: '28px', fontWeight: 800, fontFamily: "'Outfit', sans-serif" }}>📚 Saved Blueprints</h2>
+                                <button onClick={() => setShowBlueprints(false)} style={{ background: 'transparent', border: 'none', color: '#475569', cursor: 'pointer' }}>
+                                    <X size={24} />
+                                </button>
+                            </div>
+
+                            {blueprints.length === 0 ? (
+                                <div style={{ textAlign: 'center', padding: '60px 0' }}>
+                                    <FileText size={48} color="#334155" style={{ margin: '0 auto 24px' }} />
+                                    <p style={{ color: '#64748b', fontSize: '16px' }}>No blueprints saved yet. Generate and save a blueprint to see it here.</p>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                    {blueprints.map((bp: any, idx: number) => (
+                                        <div key={idx} style={{
+                                            background: 'rgba(255,255,255,0.02)',
+                                            padding: '20px',
+                                            borderRadius: '16px',
+                                            border: '1px solid rgba(255,255,255,0.05)',
+                                            transition: 'all 0.2s',
+                                            cursor: 'pointer'
+                                        }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.background = 'rgba(16, 185, 129, 0.05)';
+                                                e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.2)';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.background = 'rgba(255,255,255,0.02)';
+                                                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)';
+                                            }}
+                                        >
+                                            <div style={{ fontSize: '16px', fontWeight: 600, color: '#fff', marginBottom: '8px', fontFamily: "'JetBrains Mono', monospace" }}>{bp.filename}</div>
+                                            <div style={{ fontSize: '13px', color: '#64748b', display: 'flex', gap: '16px' }}>
+                                                <span>{(bp.size / 1024).toFixed(1)} KB</span>
+                                                <span>•</span>
+                                                <span>{new Date(bp.lastModified).toLocaleString()}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
+    );
+};

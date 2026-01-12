@@ -1,0 +1,25 @@
+spring:
+  main:
+    web-application-type: servlet
+  application:
+    name: ingestion-engine
+  datasource:
+    url: jdbc:postgresql://host.docker.internal:5432/decode
+    username: kothuparotta
+    password: "" 
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          lob:
+            non_contextual_creation: true
+
+minio:
+  endpoint: http://host.docker.internal:9000
+  accessKey: minioadmin
+  secretKey: minioadmin
+  bucket: decode-source-code

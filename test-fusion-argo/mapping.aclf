@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root>
+    <ExternalXML.Detail>
+        <Tag>USR_NAME</Tag>
+        <Data>username</Data>
+    </ExternalXML.Detail>
+    <ExternalXML.Detail>
+        <Tag>USR_AGE</Tag>
+        <Data>age</Data>
+    </ExternalXML.Detail>
+    <ExternalXML.Detail>
+        <Tag>USR_INTEREST</Tag>
+        <Data>INTEREST-RATE</Data>
+    </ExternalXML.Detail>
+</root>

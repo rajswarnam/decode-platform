@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: documentation-hub
+  namespace: decode-app
+  labels:
+    app: documentation-hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: documentation-hub
+  template:
+    metadata:
+      labels:
+        app: documentation-hub
+    spec:
+      containers:
+      - name: documentation-hub
+        image: documentation-hub:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: documentation-hub
+  namespace: decode-app
+spec:
+  selector:
+    app: documentation-hub
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080

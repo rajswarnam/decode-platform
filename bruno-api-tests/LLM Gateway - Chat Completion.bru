@@ -1,0 +1,38 @@
+meta {
+  name: LLM Gateway - Chat Completion
+  type: http
+  seq: 1
+}
+
+post {
+  url: http://localhost:8081/v1/chat/completions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "model": "gpt-4o-mini-decode",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Analyze the technical symbol 'CustomerAccount' (Category: class). Provide: 1) Business Name (camelCase), 2) Standard Label (Title Case), 3) Description (1 sentence). Format: BusinessName|StandardLabel|Description"
+      }
+    ]
+  }
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Response contains choices", function() {
+    expect(res.body.choices).to.be.an('array');
+    expect(res.body.choices.length).to.be.greaterThan(0);
+  });
+  
+  test("Response contains usage stats", function() {
+    expect(res.body.usage).to.have.property('total_tokens');
+  });
+}

@@ -1,0 +1,144 @@
+# ============================================
+# COMPILED BINARIES (Strict Exclude)
+# ============================================
+*.class
+*.jar
+*.war
+*.ear
+*.dll
+*.exe
+*.so
+*.dylib
+*.bin
+*.o
+*.obj
+*.a
+*.lib
+*.out
+*.pyc
+*.pdb
+
+# ============================================
+# MAINFRAME & MIDDLEWARE (TIBCO/Fusion Argo)
+# ============================================
+*.LOAD
+*.LNK
+*.vcrepo
+*.tra
+*.projlib
+*.archive
+
+# ============================================
+# BUILD & DEPENDENCY DIRECTORIES
+# ============================================
+target/
+bin/
+obj/
+build/
+dist/
+out/
+node_modules/
+.gradle/
+.mvn/
+vendor/
+packages/
+App_Data/
+_ReSharper*/
+
+# ============================================
+# MEDIA & OFFICE DOCUMENTS (Phase 1 Exclude)
+# ============================================
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.svg
+*.ico
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+
+# ============================================
+# RAW DATA FILES (High TPM Risk)
+# ============================================
+*.dat
+*.db
+*.sqlite
+*.mdb
+*.accdb
+*.dump
+*.sql.gz
+*.bak
+*.mdf
+*.ldf
+
+# ============================================
+# COMPRESSED ARCHIVES (Extract First)
+# ============================================
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+*.tgz
+
+# ============================================
+# NODE.JS & WEB DEPENDENCIES
+# ============================================
+node_modules/
+package-lock.json
+yarn.lock
+.npm/
+.eslintcache
+
+# ============================================
+# .NET / ASP ARTIFACTS
+# ============================================
+bin/
+obj/
+*.suo
+*.user
+
+# ============================================
+# IDE & SYSTEM FILES
+# ============================================
+.idea/
+.vscode/
+.vs/
+*.iml
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ============================================
+# LOGS & TEMPORARY FILES
+# ============================================
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+logs/
+
+# ============================================
+# VERSION CONTROL (Already Excluded by Git)
+# ============================================
+.git/
+.svn/
+.hg/
+
+# ============================================
+# ALLOWED FORMATS (For Reference)
+# ============================================
+# Source Code: .java, .c, .cpp, .h, .cbl, .cob, .js, .ts, .py, .rb, .go
+# Config: .xml, .yaml, .yml, .json, .properties, .conf, .aclf
+# Docs: .md, .txt, .rst
+# ============================================

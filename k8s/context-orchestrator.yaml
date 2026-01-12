@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: context-orchestrator
+  namespace: decode-app
+  labels:
+    app: context-orchestrator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: context-orchestrator
+  template:
+    metadata:
+      labels:
+        app: context-orchestrator
+    spec:
+      containers:
+      - name: context-orchestrator
+        image: context-orchestrator:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: context-orchestrator
+  namespace: decode-app
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/server-proxy-read-timeout: "1800"
+spec:
+  selector:
+    app: context-orchestrator
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080
