@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: code-parser
+  namespace: decode-app
+  labels:
+    app: code-parser
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: code-parser
+  template:
+    metadata:
+      labels:
+        app: code-parser
+    spec:
+      containers:
+      - name: code-parser
+        image: code-parser:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: code-parser
+  namespace: decode-app
+spec:
+  selector:
+    app: code-parser
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080

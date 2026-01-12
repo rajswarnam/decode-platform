@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: context-orchestrator
+  datasource:
+    url: jdbc:postgresql://host.docker.internal:5432/decode
+    username: kothuparotta
+    password: 
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  ai:
+    openai:
+      api-key: dummy-key-for-gateway
+      base-url: http://llm-gateway-service:8081
+      chat:
+        options:
+          model: gpt-4o
+    vectorstore:
+      qdrant:
+        host: host.docker.internal
+        port: 6334
+        collection-name: symbols
+        initialize-schema: false
+    transformers:
+      onnx:
+        model-uri: file:/models/model.onnx
+        tokenizer-uri: file:/models/tokenizer.json
+  http:
+    client:
+      read-timeout: 120s
+      connect-timeout: 60s
+
+minio:
+  endpoint: http://host.docker.internal:9000
+  accessKey: minioadmin
+  secretKey: minioadmin
+  bucket: decode-source-code

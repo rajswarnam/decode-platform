@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: vectorizer-service
+  datasource:
+    url: jdbc:postgresql://host.docker.internal:5432/decode
+    username: kothuparotta
+    password: 
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update # To map entities, usually 'validate' or 'none' if schema exists. 'update' is safe for dev.
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  ai:
+    vectorstore:
+      qdrant:
+        host: host.docker.internal
+        port: 6334
+        collection-name: symbols
+        initialize-schema: true
+    transformers:
+      onnx:
+        # Configuration for local ONNX execution
+        model-uri: file:/models/model.onnx
+        tokenizer-uri: file:/models/tokenizer.json
+
+minio:
+  endpoint: http://minio:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket: decode-source-code

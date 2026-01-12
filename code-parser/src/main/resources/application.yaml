@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: code-parser
+  datasource:
+    url: jdbc:postgresql://host.docker.internal:5432/decode
+    username: kothuparotta
+    password: 
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  ai:
+    openai:
+      api-key: dummy-key-for-gateway
+      base-url: http://llm-gateway-service:8081
+      chat:
+        options:
+          model: gpt-3.5-turbo
+
+minio:
+  endpoint: http://minio:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket: decode-source-code

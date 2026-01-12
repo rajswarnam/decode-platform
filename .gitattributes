@@ -1,0 +1,24 @@
+# 1. Global: Auto-detect text files and normalize to LF in the repo
+* text=auto
+
+# 2. Modern Code: Force LF even on Windows checkouts (Critical for Alpine/Docker)
+*.java      text eol=lf
+*.py        text eol=lf
+*.tsx       text eol=lf
+*.ts        text eol=lf
+*.json      text eol=lf
+*.sh        text eol=lf
+
+# 3. Legacy Code: Force LF to ensure identical embeddings across platforms
+*.c         text eol=lf
+*.h         text eol=lf
+*.cbl       text eol=lf
+*.cpy       text eol=lf
+
+# 4. Binary Protection: Prevent corruption of non-text assets
+*.png       binary
+*.jpg       binary
+*.gif       binary
+*.pdf       binary
+*.exe       binary
+*.jar       binary
