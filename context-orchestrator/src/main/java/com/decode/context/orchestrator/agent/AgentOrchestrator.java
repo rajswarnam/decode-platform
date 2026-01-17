@@ -143,12 +143,12 @@ public class AgentOrchestrator {
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
             
             // PHASE 3: QA AUDIT
-            qaReport = runDeepQACheck(plan, progressConsumer);
+            qaReport = runDeepQACheck(plan, executionPlan, progressConsumer);
             executionPlan.getQaReports().add(qaReport);
             
             // DECISION POINT
             if (iteration < maxIterations) {
-                boolean needsRefinement = refineTasksBasedOnQA(plan, qaReport, iteration, progressConsumer);
+                boolean needsRefinement = refineTasksBasedOnQA(plan, qaReport, iteration, executionPlan, progressConsumer);
                 
                 // SPECIALIST SPAWNING: If critical gaps found, add new workers
                 if (iteration == 2 && qaReport.contains("❌")) {
@@ -261,7 +261,7 @@ public class AgentOrchestrator {
         }
     }
     
-    private boolean refineTasksBasedOnQA(List<WorkerTask> tasks, String qaReport, int iteration, Consumer<String> progressConsumer) {
+    private boolean refineTasksBasedOnQA(List<WorkerTask> tasks, String qaReport, int iteration, CurrentExecutionPlan executionPlan, Consumer<String> progressConsumer) {
         progressConsumer.accept("🔄 Architect: Reviewing QA Critique for Refinement...");
         
         // SMART SKIP: If ALL workers found 0 files, don't refine - there's no code to analyze
@@ -276,10 +276,124 @@ public class AgentOrchestrator {
             return false;
         }
         
-        // Architect decides if workers need to dig deeper
-        // heuristic: if QA report contains "❌" or "⚠️", we refine.
-        if (!qaReport.contains("❌") && !qaReport.contains("⚠️")) return false;
+        // ENHANCED: Parse coverage metrics from QA report and check thresholds
+        QueryIntentAnalyzer.QueryIntent queryIntent = executionPlan.getQueryIntent();
+        LexicalScoutAgent.DomainMap domainMap = executionPlan.getDomainMap();
+        boolean isComprehensive = queryIntent != null && queryIntent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.COMPREHENSIVE;
         
+        boolean needsRefinement = false;
+        boolean coverageIssue = false;
+        
+        // Extract evidence files count
+        Set<String> evidenceFiles = new HashSet<>();
+        for (WorkerTask t : tasks) {
+            String report = t.getReport() != null ? t.getReport() : "";
+            java.util.regex.Pattern evidencePattern = java.util.regex.Pattern.compile("\\*\\*Evidence\\*\\*:\\s*`([^`]+)`");
+            java.util.regex.Matcher matcher = evidencePattern.matcher(report);
+            while (matcher.find()) {
+                evidenceFiles.add(matcher.group(1));
+            }
+        }
+        int filesAnalyzed = evidenceFiles.size();
+        int recommendedFiles = queryIntent != null ? queryIntent.getRecommendedTopK() : 50;
+        
+        // Parse QA report for coverage metrics
+        int modulesCovered = 0;
+        int totalModules = 0;
+        double fileCoveragePercent = 0.0;
+        double moduleCoveragePercent = 0.0;
+        
+        // Extract module coverage from QA report
+        java.util.regex.Pattern modulePattern = java.util.regex.Pattern.compile("(?i)(\\d+)\\s*(?:out of|/)\\s*(\\d+)\\s*(?:modules|module)");
+        java.util.regex.Matcher moduleMatcher = modulePattern.matcher(qaReport);
+        if (moduleMatcher.find()) {
+            modulesCovered = Integer.parseInt(moduleMatcher.group(1));
+            totalModules = Integer.parseInt(moduleMatcher.group(2));
+            if (totalModules > 0) {
+                moduleCoveragePercent = (double) modulesCovered / totalModules * 100;
+            }
+        }
+        
+        // Extract file count coverage
+        java.util.regex.Pattern filePattern = java.util.regex.Pattern.compile("(?i)(\\d+)\\s*(?:files?|file)\\s*(?:analyzed|with evidence)\\s*(?:vs|out of|/)\\s*(\\d+)");
+        java.util.regex.Matcher fileMatcher = filePattern.matcher(qaReport);
+        if (fileMatcher.find()) {
+            int reportedFiles = Integer.parseInt(fileMatcher.group(1));
+            int reportedRecommended = Integer.parseInt(fileMatcher.group(2));
+            if (reportedRecommended > 0) {
+                fileCoveragePercent = (double) reportedFiles / reportedRecommended * 100;
+            }
+        } else if (recommendedFiles > 0) {
+            // Fallback: Use extracted file count vs recommended
+            fileCoveragePercent = (double) filesAnalyzed / recommendedFiles * 100;
+        }
+        
+        // THRESHOLD CHECKS for COMPREHENSIVE queries
+        if (isComprehensive && domainMap != null && domainMap.getModules() != null && !domainMap.getModules().isEmpty()) {
+            List<String> knownModules = domainMap.getModules().stream()
+                .limit(10)
+                .map(LexicalScoutAgent.ModuleCluster::getModuleName)
+                .collect(java.util.stream.Collectors.toList());
+            
+            totalModules = Math.max(totalModules, knownModules.size());
+            if (totalModules == 0) totalModules = knownModules.size();
+            
+            // Check module coverage threshold (50% for warning, 30% for critical)
+            if (moduleCoveragePercent < 30.0 || (totalModules > 0 && modulesCovered < Math.ceil(totalModules * 0.3))) {
+                log.warn("Module coverage too low: {}/{} modules ({}%)", modulesCovered, totalModules, String.format("%.1f", moduleCoveragePercent));
+                coverageIssue = true;
+                needsRefinement = true;
+                progressConsumer.accept("⚠️ Architect: Critical module coverage gap detected (" + modulesCovered + "/" + totalModules + " modules). Spawning module-specific workers...");
+                spawnModuleWorkers(tasks, domainMap, knownModules, modulesCovered, progressConsumer);
+            } else if (moduleCoveragePercent < 50.0 || (totalModules > 0 && modulesCovered < Math.ceil(totalModules * 0.5))) {
+                log.warn("Module coverage below threshold: {}/{} modules ({}%)", modulesCovered, totalModules, String.format("%.1f", moduleCoveragePercent));
+                coverageIssue = true;
+                needsRefinement = true;
+                progressConsumer.accept("⚠️ Architect: Module coverage below threshold (" + modulesCovered + "/" + totalModules + " modules). Expanding module search...");
+            }
+            
+            // Check file count coverage threshold (50% for critical, 70% for warning)
+            if (fileCoveragePercent < 50.0) {
+                log.warn("File coverage too low: {} files vs {} recommended ({}%)", filesAnalyzed, recommendedFiles, String.format("%.1f", fileCoveragePercent));
+                coverageIssue = true;
+                needsRefinement = true;
+                progressConsumer.accept("⚠️ Architect: Critical file coverage gap (" + filesAnalyzed + "/" + recommendedFiles + " files). Expanding search breadth...");
+            } else if (fileCoveragePercent < 70.0) {
+                log.warn("File coverage below threshold: {} files vs {} recommended ({}%)", filesAnalyzed, recommendedFiles, String.format("%.1f", fileCoveragePercent));
+                coverageIssue = true;
+                needsRefinement = true;
+            }
+        }
+        
+        // Check for technical issues (emojis in QA report)
+        boolean hasTechnicalIssues = qaReport.contains("❌") || qaReport.contains("⚠️");
+        if (hasTechnicalIssues) {
+            needsRefinement = true;
+        }
+        
+        // If no issues found (neither coverage nor technical), mark as satisfied
+        if (!needsRefinement) {
+            log.info("QA report shows no issues. All workers satisfied.");
+            tasks.forEach(t -> {
+                if (t.getStatus() != null && !t.getStatus().equals("COMPLETED_SATISFIED")) {
+                    t.setStatus("COMPLETED_SATISFIED");
+                }
+            });
+            return false;
+        }
+        
+        // REFINEMENT: For coverage issues, update query intent to expand search
+        // For technical issues, refine specific workers
+        if (coverageIssue && isComprehensive && queryIntent != null) {
+            // Increase search breadth for next iteration
+            int currentTopK = queryIntent.getRecommendedTopK();
+            int expandedTopK = Math.max((int) (currentTopK * 1.5), (int) (recommendedFiles * 0.8)); // Increase by 50% or target 80% of recommended
+            queryIntent.setRecommendedTopK(expandedTopK);
+            log.info("Expanded search TopK from {} to {} for better coverage", currentTopK, expandedTopK);
+            progressConsumer.accept("📊 Expanding search breadth: " + currentTopK + " → " + expandedTopK + " files");
+        }
+        
+        // Refine individual workers based on QA critique (existing logic)
         for (WorkerTask task : tasks) {
             // Skip refinement for workers that found no code
             if (task.getReport() != null && task.getReport().contains("No relevant code found")) {
@@ -287,48 +401,100 @@ public class AgentOrchestrator {
                 continue;
             }
             
-            // Check if this specific agent was criticized in the report
-            String updatePrompt = String.format("""
-                You are the Head Architect (Iteration %d/4).
-                Worker: %s (Focus: %s)
-                Previous Report: %s
-                
-                QA Critique:
-                %s
-                
-                Instruction:
-                If the QA Critique highlights missing info for THIS worker, generate a NEW, CONCISE Question (one sentence).
-                Focus on: %s
-                If the report is fine, output "SATISFIED".
-                
-                Output ONLY the question or "SATISFIED", nothing else:
-                """, iteration, task.getPersona().name(), task.getFocusArea(), task.getReport(), qaReport,
-                iteration == 2 ? "Evidence and specific file citations" :
-                iteration == 3 ? "Cross-references with other agents' findings" :
-                "Final validation and completeness");
-                
-             String rawResponse = blockingCall(updatePrompt).trim();
-             
-             // Clean up LLM response - extract just the question
-             String cleanedQuestion = rawResponse
-                 .replaceAll("(?i)\\*\\*.*?\\*\\*:?", "") // Remove **headers**
-                 .replaceAll("(?i)new question:?", "")    // Remove "New Question:"
-                 .replaceAll("(?i)deeper question:?", "") // Remove "Deeper Question:"
-                 .replaceAll("^[-•]\\s*", "")             // Remove bullet points
-                 .replaceAll("\\n+", " ")                 // Replace newlines with spaces
-                 .trim();
-             
-             if (!cleanedQuestion.contains("SATISFIED") && cleanedQuestion.length() > 10) {
-                 task.setStatus("REFINING");
-                 task.setSpecificQuestion(cleanedQuestion);
-                 task.setAttemptCount(task.getAttemptCount() + 1);
-                 log.info("Refined question for {}: {}", task.getPersona(), cleanedQuestion);
-                 progressConsumer.accept("🔁 Re-assigning " + task.getPersona().getTitle() + ": " + cleanedQuestion.substring(0, Math.min(80, cleanedQuestion.length())) + "...");
-             } else {
-                 task.setStatus("COMPLETED_SATISFIED");
-             }
+            // Only refine workers if QA specifically criticizes them OR if we need general refinement
+            if (hasTechnicalIssues || coverageIssue) {
+                // Check if this specific agent was criticized in the report
+                String updatePrompt = String.format("""
+                    You are the Head Architect (Iteration %d/4).
+                    Worker: %s (Focus: %s)
+                    Previous Report: %s
+                    
+                    QA Critique:
+                    %s
+                    
+                    Instruction:
+                    If this is a COMPREHENSIVE query with coverage issues, focus on expanding scope to cover missing modules/domains.
+                    If this is a technical issue (type mismatch, SRE risk), focus on that specific problem.
+                    If the QA Critique highlights missing info for THIS worker, generate a NEW, CONCISE Question (one sentence).
+                    Focus on: %s
+                    If the report is fine and coverage is adequate, output "SATISFIED".
+                    
+                    Output ONLY the question or "SATISFIED", nothing else:
+                    """, iteration, task.getPersona().name(), task.getFocusArea(), task.getReport(), qaReport,
+                    coverageIssue ? "Expanding coverage to missing modules/domains" :
+                    iteration == 2 ? "Evidence and specific file citations" :
+                    iteration == 3 ? "Cross-references with other agents' findings" :
+                    "Final validation and completeness");
+                    
+                 String rawResponse = blockingCall(updatePrompt).trim();
+                 
+                 // Clean up LLM response - extract just the question
+                 String cleanedQuestion = rawResponse
+                     .replaceAll("(?i)\\*\\*.*?\\*\\*:?", "") // Remove **headers**
+                     .replaceAll("(?i)new question:?", "")    // Remove "New Question:"
+                     .replaceAll("(?i)deeper question:?", "") // Remove "Deeper Question:"
+                     .replaceAll("^[-•]\\s*", "")             // Remove bullet points
+                     .replaceAll("\\n+", " ")                 // Replace newlines with spaces
+                     .trim();
+                 
+                 if (!cleanedQuestion.contains("SATISFIED") && cleanedQuestion.length() > 10) {
+                     task.setStatus("REFINING");
+                     task.setSpecificQuestion(cleanedQuestion);
+                     task.setAttemptCount(task.getAttemptCount() + 1);
+                     log.info("Refined question for {}: {}", task.getPersona(), cleanedQuestion);
+                     progressConsumer.accept("🔁 Re-assigning " + task.getPersona().getTitle() + ": " + cleanedQuestion.substring(0, Math.min(80, cleanedQuestion.length())) + "...");
+                 } else {
+                     task.setStatus("COMPLETED_SATISFIED");
+                 }
+            } else {
+                task.setStatus("COMPLETED_SATISFIED");
+            }
         }
-        return tasks.stream().anyMatch(t -> t.getStatus().equals("REFINING"));
+        
+        return tasks.stream().anyMatch(t -> t.getStatus() != null && t.getStatus().equals("REFINING"));
+    }
+    
+    /**
+     * Spawn workers for missing modules when coverage is low
+     */
+    private void spawnModuleWorkers(List<WorkerTask> existingTasks, LexicalScoutAgent.DomainMap domainMap, 
+                                    List<String> knownModules, int modulesCovered, Consumer<String> progressConsumer) {
+        if (domainMap == null || domainMap.getModules() == null || domainMap.getModules().isEmpty()) {
+            return;
+        }
+        
+        // Find modules that don't have coverage yet
+        Set<String> coveredModuleNames = new HashSet<>();
+        for (WorkerTask task : existingTasks) {
+            String report = task.getReport() != null ? task.getReport() : "";
+            // Try to infer module from focus area or report
+            for (String module : knownModules) {
+                if (task.getFocusArea().toLowerCase().contains(module.toLowerCase()) || 
+                    report.toLowerCase().contains(module.toLowerCase())) {
+                    coveredModuleNames.add(module);
+                }
+            }
+        }
+        
+        // Spawn workers for uncovered modules (limit to avoid too many workers)
+        List<String> uncoveredModules = knownModules.stream()
+            .filter(m -> !coveredModuleNames.contains(m))
+            .limit(3) // Spawn max 3 additional workers
+            .collect(java.util.stream.Collectors.toList());
+        
+        for (String module : uncoveredModules) {
+            WorkerTask moduleWorker = WorkerTask.builder()
+                .taskId(UUID.randomUUID().toString())
+                .persona(WorkerPersona.LOGIC_EXTRACTOR) // Use logic extractor for module discovery
+                .focusArea(module + "-module")
+                .specificQuestion("What business domains and capabilities are provided by the " + module + " module?")
+                .status("PENDING")
+                .attemptCount(0)
+                .build();
+            existingTasks.add(moduleWorker);
+            progressConsumer.accept("➕ Spawned module worker: " + module);
+            log.info("Spawned module worker for: {}", module);
+        }
     }
 
     // --- ROBUST LLM CALLER (Stream Aggregation) ---
@@ -901,30 +1067,120 @@ public class AgentOrchestrator {
         }
     }
 
-    private String runDeepQACheck(List<WorkerTask> results, Consumer<String> progressConsumer) {
-        if (progressConsumer != null) progressConsumer.accept("🕵🏻 QA Agent: Auditing Type Safety & Schema Drift...");
+    private String runDeepQACheck(List<WorkerTask> results, CurrentExecutionPlan executionPlan, Consumer<String> progressConsumer) {
+        if (progressConsumer != null) progressConsumer.accept("🕵🏻 QA Agent: Auditing Quality, Coverage & Completeness...");
         
         StringBuilder sourceMaterial = new StringBuilder();
+        Set<String> evidenceFiles = new HashSet<>();
+        Set<String> modulesCovered = new HashSet<>();
+        
         for (WorkerTask t : results) {
             sourceMaterial.append("\n=== SOURCE: ").append(t.getPersona().name()).append(" ===\n")
                           .append(t.getReport()).append("\n");
+            
+            // Extract evidence files from report
+            String report = t.getReport() != null ? t.getReport() : "";
+            java.util.regex.Pattern evidencePattern = java.util.regex.Pattern.compile("\\*\\*Evidence\\*\\*:\\s*`([^`]+)`");
+            java.util.regex.Matcher matcher = evidencePattern.matcher(report);
+            while (matcher.find()) {
+                evidenceFiles.add(matcher.group(1));
+            }
+        }
+        
+        // Extract module hints from file paths (after collecting all evidence files)
+        for (String file : evidenceFiles) {
+            String[] parts = file.split("/");
+            if (parts.length > 2) {
+                // Try to identify module from path (e.g., com/company/module/...)
+                for (int i = 0; i < parts.length - 1; i++) {
+                    if (parts[i].matches("^[a-z]+(-[a-z]+)*$") && parts[i].length() > 3) {
+                        modulesCovered.add(parts[i]);
+                    }
+                }
+            }
+        }
+        
+        QueryIntentAnalyzer.QueryIntent queryIntent = executionPlan.getQueryIntent();
+        LexicalScoutAgent.DomainMap domainMap = executionPlan.getDomainMap();
+        
+        String queryMode = queryIntent != null ? queryIntent.getMode().name() : "FOCUSED";
+        boolean isComprehensive = queryIntent != null && queryIntent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.COMPREHENSIVE;
+        int recommendedTopK = queryIntent != null ? queryIntent.getRecommendedTopK() : 50;
+        
+        String coverageSection = "";
+        if (isComprehensive && domainMap != null && domainMap.getModules() != null && !domainMap.getModules().isEmpty()) {
+            List<String> knownModules = domainMap.getModules().stream()
+                .limit(10)
+                .map(LexicalScoutAgent.ModuleCluster::getModuleName)
+                .collect(java.util.stream.Collectors.toList());
+            
+            coverageSection = String.format("""
+                
+                **COVERAGE & COMPLETENESS CHECKS** (CRITICAL for COMPREHENSIVE queries):
+                4. **Module Diversity**: Does evidence cover multiple modules/domains? 
+                   - Known modules in codebase: %s
+                   - Modules covered in evidence: %s
+                   - Flag ⚠️ if <50%% of major modules have evidence, ❌ if <30%%
+                5. **Evidence Quantity**: 
+                   - Total unique files with evidence: %d
+                   - Recommended for COMPREHENSIVE mode: %d+ files
+                   - Flag ⚠️ if <70%% of recommended, ❌ if <50%%
+                6. **Domain Representativeness**: Are all major business domains represented?
+                   - Check if evidence spans multiple domains (Sales, Finance, HR, etc.)
+                   - Flag ⚠️ if only 1-2 domains covered, ❌ if single domain dominates
+                """, 
+                knownModules.toString(),
+                modulesCovered.toString(),
+                evidenceFiles.size(),
+                recommendedTopK);
+        } else {
+            coverageSection = """
+                
+                **COVERAGE CHECK** (for FOCUSED queries):
+                4. **Evidence Sufficiency**: Does the evidence adequately answer the specific question?
+                   - Flag ⚠️ if evidence is sparse or unclear
+                   - Flag ❌ if critical evidence is missing for the specific query
+                """;
         }
         
         String prompt = String.format("""
             You are the Lead SRE and QA Architect.
-            task: Perform a "Schema Drift" audit between Backend and Frontend agents.
+            Query Mode: %s
+            Task: Perform comprehensive quality audit including technical correctness, evidence quality, and coverage.
             
             Source Reports:
             %s
             
             **CRITICAL INSTRUCTIONS**:
             1. **Detect Type Mismatches**: Does the Backend say "Returns Integer" but Frontend says "Expects JSON"?
+               - Flag ❌ for incompatible types
+               - Flag ⚠️ for ambiguous or unclear type contracts
             2. **Identify SRE Risks**: Are there synchronous dependencies (e.g. OrderService calls PaymentService blocking)?
-            3. **Verify Boundary Contracts**: Do REST paths match REDUX Action payloads?
+               - Flag ❌ for blocking calls that could cause cascading failures
+               - Flag ⚠️ for potential performance bottlenecks
+            3. **Verify Boundary Contracts**: Do REST paths match REDUX Action payloads? Do API contracts match?
+               - Flag ❌ for mismatched contracts
+               - Flag ⚠️ for missing or unclear contracts
+            %s
+            7. **Evidence Quality**: For each worker report, assess:
+               - Are code citations specific (include line numbers)?
+               - Are code snippets accurate and relevant?
+               - Are claims backed by evidence?
+               - Flag ⚠️ for weak evidence, ❌ for missing or incorrect evidence
+            8. **Report Completeness**: 
+               - Do reports address the assigned questions?
+               - Are findings actionable and specific?
+               - Flag ⚠️ for vague or incomplete answers, ❌ for unanswered questions
             
-            Output a specialized "QA Audit Log" identifying these specific risks. 
-            Use emojis: ❌ for Drift, ⚠️ for Weakness, ✅ for Match.
-            """, sourceMaterial.toString());
+            Output a comprehensive "QA Audit Log" identifying all issues.
+            Use emojis: ❌ for Critical Issues, ⚠️ for Warnings, ✅ for Good.
+            
+            **IMPORTANT**: For COMPREHENSIVE queries, coverage and module diversity are CRITICAL.
+            For FOCUSED queries, evidence quality and specificity are more important than breadth.
+            """, 
+            queryMode,
+            sourceMaterial.toString(),
+            coverageSection);
             
         return blockingCall(prompt);
     }
