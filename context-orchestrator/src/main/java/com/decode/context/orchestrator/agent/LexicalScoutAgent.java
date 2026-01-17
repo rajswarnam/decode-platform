@@ -78,8 +78,18 @@ public class LexicalScoutAgent {
      * Uses cache to avoid re-analyzing the same project
      */
     public DomainMap discoverDomain(String projectContext, Consumer<String> progressConsumer) {
-        // Extract domain/project identifier from context
-        String domain = extractDomainIdentifier(projectContext);
+        return discoverDomain(projectContext, null, progressConsumer);
+    }
+    
+    /**
+     * Perform domain discovery with explicit domain filtering
+     * Uses cache to avoid re-analyzing the same project
+     */
+    public DomainMap discoverDomain(String projectContext, String domain, Consumer<String> progressConsumer) {
+        // Extract domain/project identifier from context if not provided
+        if (domain == null || domain.isEmpty()) {
+            domain = extractDomainIdentifier(projectContext);
+        }
         
         // Check cache first
         CachedDomainMap cached = domainCache.get(domain);
@@ -98,8 +108,8 @@ public class LexicalScoutAgent {
         log.info("🔍 Lexical Scout: Beginning domain discovery for '{}'...", domain);
         if (progressConsumer != null) progressConsumer.accept("🔍 Lexical Scout: Scanning codebase for domain vocabulary...");
         
-        // Sample the vector store to get a representative set of documents
-        List<Document> sampleDocs = sampleVectorStore(500);
+        // Sample the vector store to get a representative set of documents (FILTERED BY DOMAIN)
+        List<Document> sampleDocs = sampleVectorStore(500, domain);
         
         if (sampleDocs.isEmpty()) {
             log.warn("No documents found in vector store. Domain discovery skipped.");
@@ -175,7 +185,7 @@ public class LexicalScoutAgent {
         return "default";
     }
     
-    private List<Document> sampleVectorStore(int sampleSize) {
+    private List<Document> sampleVectorStore(int sampleSize, String domain) {
         // Stratified Sampling: Query multiple layers to ensure diverse coverage
         List<String> strataQueries = List.of(
             "service controller repository",      // Backend Layer
@@ -188,13 +198,38 @@ public class LexicalScoutAgent {
         int perStrata = sampleSize / strataQueries.size();
         Set<Document> combinedDocs = new HashSet<>();
         
+        // FILTER BY DOMAIN if specified
         for (String query : strataQueries) {
-            SearchRequest request = SearchRequest.builder()
+            SearchRequest.Builder requestBuilder = SearchRequest.builder()
                 .query(query)
-                .topK(perStrata)
-                .build();
-            combinedDocs.addAll(vectorStore.similaritySearch(request));
+                .topK(perStrata * 2); // Query more to account for filtering
+            
+            // Apply domain filter if specified
+            if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+                log.debug("Lexical Scout: Filtering by domain '{}'", domain);
+                requestBuilder.filterExpression("domain == '" + domain + "'");
+            }
+            
+            SearchRequest request = requestBuilder.build();
+            List<Document> results = vectorStore.similaritySearch(request);
+            
+            // If filtered search returned empty, retry without filter and manually filter
+            if (results.isEmpty() && domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+                log.warn("⚠️ Lexical Scout: Domain filter '{}' returned 0 results for query '{}'. Retrying without filter...", domain, query);
+                SearchRequest unfiltered = SearchRequest.builder()
+                    .query(query)
+                    .topK(perStrata * 2)
+                    .build();
+                results = vectorStore.similaritySearch(unfiltered);
+                // Note: Manual filtering would require SymbolRepository which we don't have here
+                // This is okay - the downstream filtering in AgentOrchestrator will handle it
+            }
+            
+            combinedDocs.addAll(results);
         }
+        
+        log.info("Lexical Scout: Sampled {} documents from vector store (domain filter: {})", 
+            combinedDocs.size(), domain != null ? domain : "none");
         
         return new ArrayList<>(combinedDocs);
     }
@@ -326,9 +361,21 @@ public class LexicalScoutAgent {
         // Extract module names from file paths
         Map<String, List<Document>> moduleGroups = new HashMap<>();
         
+        // List of invalid module names to filter out (package-like names)
+        Set<String> invalidModules = Set.of("de", "metas", "org", "com", "net", "unknown");
+        
         for (Document doc : docs) {
             String filePath = doc.getMetadata().getOrDefault("file_path", "").toString();
             String module = extractModuleName(filePath);
+            
+            // Filter out invalid/invalid module names
+            if (module == null || module.isEmpty() || invalidModules.contains(module.toLowerCase()) ||
+                module.toLowerCase().contains("metas") || module.toLowerCase().startsWith("de.") ||
+                module.contains(".") && module.length() > 20) {
+                // Skip package-like module names
+                continue;
+            }
+            
             moduleGroups.computeIfAbsent(module, k -> new ArrayList<>()).add(doc);
         }
         
@@ -364,11 +411,63 @@ public class LexicalScoutAgent {
     }
     
     private String extractModuleName(String filePath) {
-        // Extract module from path like "project-id/module-name/src/..."
-        String[] parts = filePath.split("/");
-        if (parts.length > 1) {
-            return parts[1]; // Second part is usually the module name
+        if (filePath == null || filePath.isEmpty()) {
+            return "unknown";
         }
+        
+        // Extract module from path like "project-id/module-name/src/..."
+        // OR from package paths like "org/openmrs/core/api/..." or "de/metas/business/..."
+        String[] parts = filePath.split("/");
+        
+        // Filter out package-like paths (e.g., "de.metas.business" or "de/metas/business")
+        // These are Java package paths, not actual modules
+        for (String part : parts) {
+            // Skip empty parts
+            if (part == null || part.isEmpty() || part.equals("src") || part.equals("main") || 
+                part.equals("java") || part.equals("test") || part.equals("resources")) {
+                continue;
+            }
+            
+            // Filter out common package prefixes that indicate Java packages, not modules
+            String lowerPart = part.toLowerCase();
+            if (lowerPart.equals("de") || lowerPart.equals("metas") || lowerPart.equals("org") || 
+                lowerPart.equals("com") || lowerPart.equals("net") || lowerPart.startsWith(".")) {
+                continue;
+            }
+            
+            // Filter out package paths with dots (e.g., "de.metas.business")
+            if (part.contains(".") && part.length() > 20) {
+                // This is likely a package path, extract the meaningful part
+                String[] packageParts = part.split("\\.");
+                if (packageParts.length >= 2) {
+                    // Take the last meaningful part (e.g., "business" from "de.metas.business")
+                    String lastPart = packageParts[packageParts.length - 1];
+                    if (lastPart.length() > 2 && !isCommonTechTerm(lastPart)) {
+                        return lastPart;
+                    }
+                }
+                continue;
+            }
+            
+            // If we find a part that looks like a module name (not a package prefix)
+            if (!part.contains(".") && part.length() > 2 && !isCommonTechTerm(part)) {
+                return part;
+            }
+        }
+        
+        // Fallback: try to extract from path structure
+        // Look for patterns like "module-name/src" or "project-module/"
+        for (int i = 0; i < parts.length - 1; i++) {
+            String part = parts[i];
+            if (part != null && !part.isEmpty() && 
+                (parts[i + 1].equals("src") || parts[i + 1].equals("main") || parts[i + 1].equals("java"))) {
+                // This is likely the module name
+                if (!part.contains(".") && !isCommonTechTerm(part)) {
+                    return part;
+                }
+            }
+        }
+        
         return "unknown";
     }
     

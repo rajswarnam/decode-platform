@@ -9,4 +9,6 @@ import java.util.UUID;
 @Repository
 public interface SourceFileRepository extends JpaRepository<SourceFile, UUID> {
     java.util.Optional<SourceFile> findFirstByProject_IdAndFileName(UUID projectId, String fileName);
+    long countByProject_Id(UUID projectId);
+    long countByProject_Domain(String domain);
 }

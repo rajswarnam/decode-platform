@@ -2,6 +2,9 @@ package com.decode.context.orchestrator.agent;
 
 import com.decode.context.orchestrator.domain.Symbol;
 import com.decode.context.orchestrator.repository.SymbolRepository;
+import com.decode.context.orchestrator.repository.SourceFileRepository;
+import com.decode.context.orchestrator.repository.ProjectRepository;
+import com.decode.context.orchestrator.domain.Project;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +34,8 @@ public class AgentOrchestrator {
     private final ChatClient.Builder chatClientBuilder;
     private final VectorStore vectorStore;
     private final SymbolRepository symbolRepository;
+    private final SourceFileRepository sourceFileRepository;
+    private final ProjectRepository projectRepository;
     private final MinioClient minioClient;
     private final LexicalScoutAgent lexicalScout;
     private final QueryIntentAnalyzer queryIntentAnalyzer;
@@ -73,7 +78,7 @@ public class AgentOrchestrator {
 
         // PHASE 0: LEXICAL SCOUT - Domain Discovery (NEW!)
         progressConsumer.accept("🔍 Phase 0: Lexical Scout - Discovering domain vocabulary...");
-        LexicalScoutAgent.DomainMap domainMap = lexicalScout.discoverDomain(projectContext, progressConsumer);
+        LexicalScoutAgent.DomainMap domainMap = lexicalScout.discoverDomain(projectContext, domain, progressConsumer);
         
         // Enrich project context with domain knowledge
         String enrichedContext = projectContext + "\n\n=== DOMAIN MAP (from Lexical Scout) ===\n" + domainMap.getDomainSummary();
@@ -231,22 +236,48 @@ public class AgentOrchestrator {
             Should we spawn additional specialist workers? If yes, output ONE line per specialist:
             Format: PERSONA|FOCUS_AREA|SPECIFIC_QUESTION
             
+            **CRITICAL RULES**:
+            1. DO NOT create focus areas about "COVERAGE", "MODULE_DIVERSITY", "EVIDENCE_QUALITY", "SRE_RISKS", or "CONTRACT_CLARITY"
+            2. DO NOT ask meta-questions about coverage or analysis quality
+            3. Focus areas should be ACTUAL business domains or technical areas (e.g., "patient-management", "medication-dispense", "data-integrity")
+            4. Questions should ask about SPECIFIC business functionality, workflows, or technical implementations
+            5. Examples of GOOD focus areas: "patient-registration", "medication-orders", "encounter-management"
+            6. Examples of BAD focus areas: "COVERAGE", "MODULE_DIVERSITY", "evidence-quality-improvement"
+            
             If no specialists needed, output: NONE
             """, qaReport, existingTasks.stream().map(t -> t.getPersona().name()).collect(Collectors.joining(", ")));
             
         String response = blockingCall(prompt).trim();
         
         if (!response.equals("NONE") && response.contains("|")) {
+            // List of coverage-related focus areas to filter out
+            Set<String> invalidFocusAreas = Set.of("coverage", "module-diversity", "evidence-quality", 
+                "sre-risks", "contract-clarity", "module_diversity", "evidence_quality", "sre_risks", "contract_clarity");
+            
             for (String line : response.split("\n")) {
                 if (line.contains("|")) {
                     String[] parts = line.split("\\|", 3);
                     if (parts.length == 3) {
+                        String focusArea = parts[1].trim();
+                        String question = parts[2].trim();
+                        
+                        // Filter out coverage-related focus areas and questions
+                        String focusLower = focusArea.toLowerCase();
+                        String questionLower = question.toLowerCase();
+                        
+                        if (invalidFocusAreas.stream().anyMatch(focusLower::contains) ||
+                            questionLower.contains("coverage") || questionLower.contains("file count") ||
+                            questionLower.contains("evidence quantity") || questionLower.contains("module diversity")) {
+                            log.warn("Skipping coverage-related specialist: {} | {}", focusArea, question);
+                            continue; // Skip this specialist
+                        }
+                        
                         try {
                             WorkerTask specialist = WorkerTask.builder()
                                 .taskId(UUID.randomUUID().toString())
                                 .persona(WorkerPersona.valueOf(parts[0].trim()))
-                                .focusArea(parts[1].trim())
-                                .specificQuestion(parts[2].trim())
+                                .focusArea(focusArea)
+                                .specificQuestion(question)
                                 .status("PENDING")
                                 .attemptCount(0)
                                 .build();
@@ -328,8 +359,9 @@ public class AgentOrchestrator {
             fileCoveragePercent = (double) filesAnalyzed / recommendedFiles * 100;
         }
         
-        // THRESHOLD CHECKS for COMPREHENSIVE queries
-        if (isComprehensive && domainMap != null && domainMap.getModules() != null && !domainMap.getModules().isEmpty()) {
+        // THRESHOLD CHECKS for COMPREHENSIVE and HYBRID queries
+        boolean isComprehensiveOrHybrid = isComprehensive || (queryIntent != null && queryIntent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.HYBRID);
+        if (isComprehensiveOrHybrid && domainMap != null && domainMap.getModules() != null && !domainMap.getModules().isEmpty()) {
             List<String> knownModules = domainMap.getModules().stream()
                 .limit(10)
                 .map(LexicalScoutAgent.ModuleCluster::getModuleName)
@@ -384,7 +416,7 @@ public class AgentOrchestrator {
         
         // REFINEMENT: For coverage issues, update query intent to expand search
         // For technical issues, refine specific workers
-        if (coverageIssue && isComprehensive && queryIntent != null) {
+        if (coverageIssue && isComprehensiveOrHybrid && queryIntent != null) {
             // Increase search breadth for next iteration
             int currentTopK = queryIntent.getRecommendedTopK();
             int expandedTopK = Math.max((int) (currentTopK * 1.5), (int) (recommendedFiles * 0.8)); // Increase by 50% or target 80% of recommended
@@ -404,6 +436,19 @@ public class AgentOrchestrator {
             // Only refine workers if QA specifically criticizes them OR if we need general refinement
             if (hasTechnicalIssues || coverageIssue) {
                 // Check if this specific agent was criticized in the report
+                String coverageGuidance = coverageIssue ? """
+                    
+                    **CRITICAL: DO NOT ask about coverage or file counts. DO NOT ask meta-questions like:
+                    - "What additional modules should be included to improve coverage?"
+                    - "What steps are being taken to ensure coverage?"
+                    - "How can we improve coverage of findings?"
+                    
+                    Instead, ask DOMAIN-SPECIFIC questions about actual business functionality:
+                    - "What patient management workflows are implemented in the medication dispense module?"
+                    - "How does the program workflow handle patient enrollment and state transitions?"
+                    - "What business rules govern the voiding process for diagnoses?"
+                    """ : "";
+                
                 String updatePrompt = String.format("""
                     You are the Head Architect (Iteration %d/4).
                     Worker: %s (Focus: %s)
@@ -413,18 +458,20 @@ public class AgentOrchestrator {
                     %s
                     
                     Instruction:
-                    If this is a COMPREHENSIVE query with coverage issues, focus on expanding scope to cover missing modules/domains.
+                    If this is a COMPREHENSIVE query with coverage issues, generate a NEW question about a SPECIFIC business domain or capability that was NOT covered yet.
+                    DO NOT ask meta-questions about coverage itself. Instead, ask about actual business functionality.
                     If this is a technical issue (type mismatch, SRE risk), focus on that specific problem.
                     If the QA Critique highlights missing info for THIS worker, generate a NEW, CONCISE Question (one sentence).
-                    Focus on: %s
+                    Focus on: %s%s
                     If the report is fine and coverage is adequate, output "SATISFIED".
                     
                     Output ONLY the question or "SATISFIED", nothing else:
                     """, iteration, task.getPersona().name(), task.getFocusArea(), task.getReport(), qaReport,
-                    coverageIssue ? "Expanding coverage to missing modules/domains" :
+                    coverageIssue ? "A specific uncovered business domain or capability (NOT coverage metrics)" :
                     iteration == 2 ? "Evidence and specific file citations" :
                     iteration == 3 ? "Cross-references with other agents' findings" :
-                    "Final validation and completeness");
+                    "Final validation and completeness",
+                    coverageGuidance);
                     
                  String rawResponse = blockingCall(updatePrompt).trim();
                  
@@ -476,18 +523,56 @@ public class AgentOrchestrator {
             }
         }
         
+        // Filter out package-like module names (e.g., "de.metas.adempiere.adempiere" or Java package paths)
+        // These are likely package names, not actual business modules
+        java.util.function.Predicate<String> isValidModule = m -> {
+            String lower = m.toLowerCase();
+            // Filter out:
+            // 1. Java package paths (contain multiple dots and are >20 chars)
+            // 2. Generic technical terms
+            // 3. Coverage-related terms
+            if (m.contains(".") && m.length() > 20) {
+                int dotCount = (int) m.chars().filter(ch -> ch == '.').count();
+                if (dotCount >= 2) {
+                    return false; // Likely a package path like "de.metas.adempiere.adempiere"
+                }
+            }
+            if (lower.contains("coverage") || lower.contains("module-diversity") || 
+                lower.contains("evidence-quality") || lower.contains("sre-risks") ||
+                lower.contains("contract-clarity")) {
+                return false; // Skip coverage-related focus areas
+            }
+            return true;
+        };
+        
         // Spawn workers for uncovered modules (limit to avoid too many workers)
         List<String> uncoveredModules = knownModules.stream()
             .filter(m -> !coveredModuleNames.contains(m))
+            .filter(isValidModule) // Filter out package-like names
             .limit(3) // Spawn max 3 additional workers
             .collect(java.util.stream.Collectors.toList());
         
         for (String module : uncoveredModules) {
+            // Clean module name: remove package prefixes and normalize
+            String cleanModuleName = module;
+            if (module.contains(".")) {
+                // Extract last meaningful part (e.g., "adempiere" from "de.metas.adempiere.adempiere")
+                String[] parts = module.split("\\.");
+                if (parts.length > 1) {
+                    // Take the last 2 parts if they're meaningful, otherwise just last part
+                    cleanModuleName = parts.length >= 2 && parts[parts.length - 2].length() > 3 
+                        ? parts[parts.length - 2] + "-" + parts[parts.length - 1]
+                        : parts[parts.length - 1];
+                }
+            }
+            cleanModuleName = cleanModuleName.replace("-module", "").replace("_", "-");
+            
             WorkerTask moduleWorker = WorkerTask.builder()
                 .taskId(UUID.randomUUID().toString())
                 .persona(WorkerPersona.LOGIC_EXTRACTOR) // Use logic extractor for module discovery
-                .focusArea(module + "-module")
-                .specificQuestion("What business domains and capabilities are provided by the " + module + " module?")
+                .focusArea(cleanModuleName + "-module")
+                // Ask about actual business functionality, NOT coverage
+                .specificQuestion("What business domains, workflows, and capabilities are implemented in the " + cleanModuleName + " area of the system? What are the key business use cases?")
                 .status("PENDING")
                 .attemptCount(0)
                 .build();
@@ -863,18 +948,39 @@ public class AgentOrchestrator {
     private List<Document> filterByProjectAssociation(List<Document> docs, String domainOrProject) {
         List<Document> filtered = new ArrayList<>();
         
+        if (domainOrProject == null || domainOrProject.isEmpty() || domainOrProject.equalsIgnoreCase("General")) {
+            log.warn("No domain/project specified for filtering. Returning all documents (potential data leak risk!)");
+            return docs; // No filtering if domain is null/empty/General
+        }
+        
+        // Find all projects that match the domain/project name
+        List<Project> matchingProjects = new ArrayList<>();
+        List<Project> projectsByName = projectRepository.findByNameContainingIgnoreCase(domainOrProject);
+        List<Project> projectsByDomain = projectRepository.findByDomain(domainOrProject);
+        
+        matchingProjects.addAll(projectsByName);
+        matchingProjects.addAll(projectsByDomain);
+        
+        // Remove duplicates by project ID
+        Set<UUID> matchingProjectIds = matchingProjects.stream()
+            .map(Project::getId)
+            .collect(java.util.stream.Collectors.toSet());
+        
+        log.info("Found {} matching projects for domain/project '{}': {}", 
+            matchingProjectIds.size(), domainOrProject, 
+            matchingProjects.stream().map(Project::getName).collect(java.util.stream.Collectors.joining(", ")));
+        
+        // STRICT MATCHING: Only include documents from matching projects
+        // Use exact project ID match instead of substring matching
         for (Document doc : docs) {
             String sid = (String) doc.getMetadata().get("symbol_id");
             if (sid != null) {
                 symbolRepository.findById(UUID.fromString(sid)).ifPresent(symbol -> {
                     if (symbol.getSourceFile() != null && symbol.getSourceFile().getProject() != null) {
-                        String projectName = symbol.getSourceFile().getProject().getName();
-                        String projectDomain = symbol.getSourceFile().getProject().getDomain();
+                        UUID projectId = symbol.getSourceFile().getProject().getId();
                         
-                        // Match if project name or domain matches
-                        if (projectName.equalsIgnoreCase(domainOrProject) || 
-                            (projectDomain != null && projectDomain.equalsIgnoreCase(domainOrProject)) ||
-                            (projectName.toLowerCase().contains(domainOrProject.toLowerCase()))) {
+                        // STRICT MATCH: Only include if project ID is in the matching set
+                        if (matchingProjectIds.contains(projectId)) {
                             filtered.add(doc);
                         }
                     }
@@ -882,7 +988,14 @@ public class AgentOrchestrator {
             }
         }
         
-        log.info("Filtered {} documents to {} matching project '{}'", docs.size(), filtered.size(), domainOrProject);
+        log.info("Filtered {} documents to {} matching project '{}' (strict project ID matching)", 
+            docs.size(), filtered.size(), domainOrProject);
+        
+        if (filtered.isEmpty() && !docs.isEmpty()) {
+            log.warn("⚠️ Filtered all documents! No documents matched project '{}'. " +
+                "This might indicate a domain/project name mismatch.", domainOrProject);
+        }
+        
         return filtered;
     }
     
@@ -901,14 +1014,24 @@ public class AgentOrchestrator {
             .topK(intent.getRecommendedTopK() / 2); // 50 for hybrid
         List<Document> primaryResults;
         if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+            log.debug("Applying Qdrant domain filter: domain == '{}'", domain);
             primaryBuilder.filterExpression("domain == '" + domain + "'");
             primaryResults = vectorStore.similaritySearch(primaryBuilder.build());
+            log.debug("Qdrant filtered search returned {} results for domain '{}'", primaryResults.size(), domain);
+            
             if (primaryResults.isEmpty()) {
-                // Fallback: retry without filter
+                log.warn("⚠️ Qdrant filter returned 0 results for domain '{}'. Falling back to unfiltered search with manual filtering.", domain);
+                // Fallback: retry without filter, then manually filter by project
                 var unfiltered = SearchRequest.builder().query(searchQuery).topK(intent.getRecommendedTopK() / 2).build();
-                primaryResults = filterByProjectAssociation(vectorStore.similaritySearch(unfiltered), domain);
+                List<Document> unfilteredResults = vectorStore.similaritySearch(unfiltered);
+                log.debug("Unfiltered search returned {} results. Applying manual project filtering...", unfilteredResults.size());
+                primaryResults = filterByProjectAssociation(unfilteredResults, domain);
+            } else {
+                // Verify that results actually match the domain (double-check filtering)
+                primaryResults = filterByProjectAssociation(primaryResults, domain);
             }
         } else {
+            log.warn("⚠️ No domain specified for filtering. Querying all projects (potential data leak risk!)");
             primaryResults = vectorStore.similaritySearch(primaryBuilder.build());
         }
         combinedDocs.addAll(primaryResults);
@@ -957,15 +1080,24 @@ public class AgentOrchestrator {
             .topK((int) (intent.getRecommendedTopK() * 0.4)); // ~80 documents
         List<Document> primaryResults;
         if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+            log.debug("Applying Qdrant domain filter (COMPREHENSIVE): domain == '{}'", domain);
             primaryBuilder.filterExpression("domain == '" + domain + "'");
             primaryResults = vectorStore.similaritySearch(primaryBuilder.build());
+            log.debug("Qdrant filtered search (COMPREHENSIVE) returned {} results for domain '{}'", primaryResults.size(), domain);
+            
             if (primaryResults.isEmpty()) {
-                // Fallback: retry without filter
-                log.warn("Domain filter '{}' returned 0 results in comprehensive mode, retrying without filter", domain);
+                // Fallback: retry without filter, then manually filter
+                log.warn("⚠️ Domain filter '{}' returned 0 results in comprehensive mode, retrying without filter and applying manual filtering", domain);
                 var unfiltered = SearchRequest.builder().query(searchQuery).topK((int) (intent.getRecommendedTopK() * 0.4)).build();
-                primaryResults = filterByProjectAssociation(vectorStore.similaritySearch(unfiltered), domain);
+                List<Document> unfilteredResults = vectorStore.similaritySearch(unfiltered);
+                log.debug("Unfiltered search (COMPREHENSIVE) returned {} results. Applying manual project filtering...", unfilteredResults.size());
+                primaryResults = filterByProjectAssociation(unfilteredResults, domain);
+            } else {
+                // Verify that results actually match the domain (double-check filtering)
+                primaryResults = filterByProjectAssociation(primaryResults, domain);
             }
         } else {
+            log.warn("⚠️ No domain specified for filtering (COMPREHENSIVE). Querying all projects (potential data leak risk!)");
             primaryResults = vectorStore.similaritySearch(primaryBuilder.build());
         }
         combinedDocs.addAll(primaryResults);
@@ -1107,8 +1239,44 @@ public class AgentOrchestrator {
         boolean isComprehensive = queryIntent != null && queryIntent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.COMPREHENSIVE;
         int recommendedTopK = queryIntent != null ? queryIntent.getRecommendedTopK() : 50;
         
+        // Get total repository size for coverage percentage calculation
+        long totalFilesInRepo = 0;
+        String repoSizeInfo = "";
+        String domain = executionPlan.getDomain();
+        if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+            try {
+                List<Project> projects = projectRepository.findByDomain(domain);
+                if (!projects.isEmpty()) {
+                    // Sum total files across all projects in this domain
+                    for (Project project : projects) {
+                        totalFilesInRepo += sourceFileRepository.countByProject_Id(project.getId());
+                    }
+                    
+                    if (totalFilesInRepo > 0) {
+                        double actualCoveragePercent = (double) evidenceFiles.size() / totalFilesInRepo * 100;
+                        repoSizeInfo = String.format(
+                            "\n                   - **Repository Size**: %d total files in project\n" +
+                            "                   - **Actual Coverage**: %.1f%% of repository analyzed (%d/%d files)\n" +
+                            "                   - **Coverage Assessment**: %s\n",
+                            totalFilesInRepo,
+                            actualCoveragePercent,
+                            evidenceFiles.size(),
+                            totalFilesInRepo,
+                            actualCoveragePercent < 5.0 ? "❌ CRITICAL - Extremely low coverage (<5%)" :
+                            actualCoveragePercent < 10.0 ? "⚠️ WARNING - Low coverage (<10%)" :
+                            actualCoveragePercent < 20.0 ? "⚠️ WARNING - Moderate coverage (<20%)" :
+                            "✅ Acceptable coverage (≥20%)"
+                        );
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to get repository size for domain {}: {}", domain, e.getMessage());
+            }
+        }
+        
         String coverageSection = "";
-        if (isComprehensive && domainMap != null && domainMap.getModules() != null && !domainMap.getModules().isEmpty()) {
+        boolean isComprehensiveOrHybrid = isComprehensive || (queryIntent != null && queryIntent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.HYBRID);
+        if (isComprehensiveOrHybrid && domainMap != null && domainMap.getModules() != null && !domainMap.getModules().isEmpty()) {
             List<String> knownModules = domainMap.getModules().stream()
                 .limit(10)
                 .map(LexicalScoutAgent.ModuleCluster::getModuleName)
@@ -1116,23 +1284,31 @@ public class AgentOrchestrator {
             
             coverageSection = String.format("""
                 
-                **COVERAGE & COMPLETENESS CHECKS** (CRITICAL for COMPREHENSIVE queries):
+                **COVERAGE & COMPLETENESS CHECKS** (CRITICAL for COMPREHENSIVE/HYBRID queries):
                 4. **Module Diversity**: Does evidence cover multiple modules/domains? 
                    - Known modules in codebase: %s
                    - Modules covered in evidence: %s
                    - Flag ⚠️ if <50%% of major modules have evidence, ❌ if <30%%
-                5. **Evidence Quantity**: 
+                5. **Evidence Quantity vs Recommended**: 
                    - Total unique files with evidence: %d
-                   - Recommended for COMPREHENSIVE mode: %d+ files
-                   - Flag ⚠️ if <70%% of recommended, ❌ if <50%%
-                6. **Domain Representativeness**: Are all major business domains represented?
+                   - Recommended for %s mode: %d+ files
+                   - Coverage vs recommended: %.1f%%
+                   - Flag ⚠️ if <70%% of recommended, ❌ if <50%%%s
+                6. **Actual Repository Coverage**:%s
+                7. **Domain Representativeness**: Are all major business domains represented?
                    - Check if evidence spans multiple domains (Sales, Finance, HR, etc.)
                    - Flag ⚠️ if only 1-2 domains covered, ❌ if single domain dominates
                 """, 
                 knownModules.toString(),
                 modulesCovered.toString(),
                 evidenceFiles.size(),
-                recommendedTopK);
+                queryMode,
+                recommendedTopK,
+                recommendedTopK > 0 ? (double) evidenceFiles.size() / recommendedTopK * 100 : 0.0,
+                recommendedTopK > 0 ? 
+                    ((double) evidenceFiles.size() / recommendedTopK < 0.5 ? " - ❌ CRITICAL" :
+                     (double) evidenceFiles.size() / recommendedTopK < 0.7 ? " - ⚠️ WARNING" : "") : "",
+                repoSizeInfo.isEmpty() ? "\n                   - Repository size unknown (cannot calculate actual coverage %)" : repoSizeInfo);
         } else {
             coverageSection = """
                 

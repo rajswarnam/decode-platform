@@ -15,7 +15,9 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import com.decode.ingestion.engine.domain.Project;
@@ -38,6 +40,58 @@ public class IngestionController {
     @GetMapping("/status")
     public ResponseEntity<List<Project>> getAllProjectStatus() {
         return ResponseEntity.ok(projectDiscoveryService.getAllProjects());
+    }
+
+    @GetMapping("/pipeline-status")
+    public ResponseEntity<Map<String, Object>> getPipelineStatus(@RequestParam String projectName) {
+        Map<String, Object> status = new HashMap<>();
+        
+        // Get project from ingestion-engine
+        java.util.Optional<com.decode.ingestion.engine.domain.Project> projectOpt = 
+            projectDiscoveryService.getAllProjects().stream()
+                .filter(p -> p.getName().equals(projectName))
+                .findFirst();
+        
+        if (projectOpt.isEmpty()) {
+            status.put("error", "Project not found");
+            return ResponseEntity.notFound().build();
+        }
+        
+        com.decode.ingestion.engine.domain.Project project = projectOpt.get();
+        status.put("projectName", project.getName());
+        status.put("projectId", project.getId().toString());
+        status.put("ingestionStatus", project.getStatus());
+        status.put("filesIngested", project.getTotalFiles());
+        
+        // Check parsing status (call code-parser)
+        try {
+            String parserUrl = "http://code-parser:8080/api/parser/status?projectId=" + project.getId();
+            org.springframework.web.client.RestTemplate restTemplate = new org.springframework.web.client.RestTemplate();
+            Map<String, Object> parserStatus = restTemplate.getForObject(parserUrl, Map.class);
+            if (parserStatus != null) {
+                status.put("symbolCount", parserStatus.get("symbolCount"));
+                status.put("parsingStatus", parserStatus.get("status"));
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch parsing status: {}", e.getMessage());
+            status.put("parsingStatus", "UNKNOWN");
+        }
+        
+        // Check vectorization status (call vectorizer-service)
+        try {
+            String vectorizerUrl = "http://vectorizer-service:8080/api/vectorizer/status?projectId=" + project.getId();
+            org.springframework.web.client.RestTemplate restTemplate = new org.springframework.web.client.RestTemplate();
+            Map<String, Object> vectorizerStatus = restTemplate.getForObject(vectorizerUrl, Map.class);
+            if (vectorizerStatus != null) {
+                status.put("embeddingStatus", vectorizerStatus.get("status"));
+                status.put("embeddingsCreated", vectorizerStatus.get("embeddingCount"));
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch vectorization status: {}", e.getMessage());
+            status.put("embeddingStatus", "UNKNOWN");
+        }
+        
+        return ResponseEntity.ok(status);
     }
 
     @PostMapping("/git-clone")
