@@ -5,12 +5,14 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'framer-motion';
+import { AnalysisPlanSidebar } from './AnalysisPlanSidebar';
 
 interface SemanticSearchProps {
     selectedBlueprintPath?: string | null;
+    domain: string;
 }
 
-export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) => {
+export const SemanticSearch = ({ selectedBlueprintPath, domain }: SemanticSearchProps) => {
     const [query, setQuery] = useState('');
     const [answer, setAnswer] = useState('');
     const [loading, setLoading] = useState(false);
@@ -27,6 +29,11 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
     const [saveTitle, setSaveTitle] = useState('');
     const [saveCategory, setSaveCategory] = useState('');
     const [saveTags, setSaveTags] = useState('');
+    
+    // Analysis Plan Sidebar
+    const [sessionId, setSessionId] = useState<string | null>(null);
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [detectedIntent, setDetectedIntent] = useState<string | null>(null);
 
     // Load blueprint content when selected
     useEffect(() => {
@@ -48,15 +55,18 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
         }
     }, [selectedBlueprintPath]);
 
-    const handleSearch = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleSearch = async (e?: any) => {
+        if (e && e.preventDefault) e.preventDefault();
         if (!query.trim()) return;
 
         setLoading(true);
-        setAnswer('');
+        setAnswer(''); // Clear previous answer
         setProgress([]);
-        setCurrentStatus('Initializing request...');
+        setCurrentStatus('Initializing Semantic Vectors...');
         setAmbiguities([]);
+        setSidebarOpen(false);
+        setSessionId(null);
+        setDetectedIntent(null); // Reset intent
 
         let accumulatedAnswer = '';
         let lastUpdateTime = Date.now();
@@ -66,7 +76,7 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
             const response = await fetch('http://localhost:8082/api/v1/explore/query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query, domain: 'General' }),
+                body: JSON.stringify({ query, domain: domain || 'General' }),
             });
 
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -103,12 +113,33 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
 
                         if (currentEvent === 'progress') {
                             const trimmedProgress = rawData.trim();
-                            setCurrentStatus(trimmedProgress);
-                            setProgress(prev => prev.includes(trimmedProgress) ? prev : [...prev, trimmedProgress]);
+                            
+                            // Extract sessionId if present
+                            if (trimmedProgress.startsWith('SESSION_ID:')) {
+                                const sid = trimmedProgress.substring(11).trim();
+                                console.log('🔗 Session ID Captured:', sid);
+                                setSessionId(sid);
+                                setSidebarOpen(true); // Auto-open sidebar when analysis starts
+                            }
+                            // Extract completion signal with sessionId
+                            else if (trimmedProgress.startsWith('COMPLETE:')) {
+                                const sid = trimmedProgress.substring(9).trim();
+                                console.log('✅ Analysis Complete:', sid);
+                                setSessionId(sid);
+                                // Results should already be in answer, but mark as complete
+                            }
+                            // Extract Intent
+                            else if (trimmedProgress.startsWith('INTENT_DETECTED:')) {
+                                setDetectedIntent(trimmedProgress.split(':')[1]);
+                            }
+                            else {
+                                setCurrentStatus(trimmedProgress);
+                                setProgress(prev => prev.includes(trimmedProgress) ? prev : [...prev, trimmedProgress]);
 
-                            // Mocking ambiguities for UX demonstration if scanning production logic
-                            if (trimmedProgress.toLowerCase().includes('scanning') && ambiguities.length === 0) {
-                                setAmbiguities([{ id: 'm1', tag: 'AuthHandler.java', reason: 'High-affinity mapping clash between legacy COBOL Core and Modern Registration endpoint.' }]);
+                                // Mocking ambiguities for UX demonstration if scanning production logic
+                                if (trimmedProgress.toLowerCase().includes('scanning') && ambiguities.length === 0) {
+                                    setAmbiguities([{ id: 'm1', tag: 'AuthHandler.java', reason: 'High-affinity mapping clash between legacy COBOL Core and Modern Registration endpoint.' }]);
+                                }
                             }
                         } else if (currentEvent === 'answer') {
                             // Unescape newlines that were escaped for SSE transport
@@ -128,8 +159,36 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
             }
             setAnswer(accumulatedAnswer);
         } catch (error) {
-            console.error(error);
-            setAnswer("### 🚩 Discovery Interrupted\nConnection to the Knowledge Graph was severed. This is often caused by VDI network restrictions or gateway timeouts.");
+            console.error('Stream error:', error);
+            
+            // Try to fetch stored results if sessionId is available
+            if (sessionId) {
+                console.log('🔄 Attempting to fetch stored results for session:', sessionId);
+                try {
+                    const resultResponse = await fetch(`http://localhost:8082/api/semantic/plans/${sessionId}/result`);
+                    if (resultResponse.ok) {
+                        const resultData = await resultResponse.json();
+                        if (resultData.finalResult) {
+                            console.log('✅ Retrieved stored results');
+                            setAnswer(resultData.finalResult);
+                            setCurrentStatus('Results retrieved from stored analysis');
+                            // Still set loading to false
+                            setLoading(false);
+                            setCurrentStatus('');
+                            return; // Exit early - we got the results
+                        }
+                    }
+                } catch (fetchError) {
+                    console.error('Failed to fetch stored results:', fetchError);
+                }
+            }
+            
+            // Fallback error message if we can't fetch stored results
+            const errorMessage = sessionId 
+                ? `### 🚩 Discovery Interrupted\n\nConnection to the Knowledge Graph was severed, but we're checking for stored results...\n\n**Session ID**: ${sessionId}\n\nIf analysis completed on the server, results will be displayed shortly.`
+                : "### 🚩 Discovery Interrupted\nConnection to the Knowledge Graph was severed. This is often caused by VDI network restrictions or gateway timeouts.";
+            
+            setAnswer(errorMessage);
         } finally {
             setLoading(false);
             setCurrentStatus('');
@@ -166,7 +225,7 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
                 body: JSON.stringify({
                     content: answer,
                     query: query,
-                    project: 'piggymetrics',
+                    project: domain,
                     title: saveTitle,
                     category: saveCategory,
                     tags: saveTags
@@ -205,7 +264,7 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
 
     const loadBlueprints = async () => {
         try {
-            const response = await fetch('http://localhost:8082/api/v1/explore/list-blueprints?project=piggymetrics');
+            const response = await fetch(`http://localhost:8082/api/v1/explore/list-blueprints?project=${domain}`);
             if (response.ok) {
                 const data = await response.json();
                 setBlueprints(data);
@@ -274,7 +333,7 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
                     border-radius: 20px;
                     padding: 4px 4px 4px 16px;
                     display: flex;
-                    align-items: center;
+                    align-items: flex-start;
                     gap: 16px;
                     width: 100%;
                     max-width: 800px;
@@ -336,20 +395,39 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
                     backdropFilter: 'blur(16px)'
                 }}>
                     <form onSubmit={handleSearch} className="search-focus">
-                        <Search size={22} color={isFocused ? '#10b981' : '#475569'} />
-                        <input
-                            type="text"
+                        <Search size={22} color={isFocused ? '#10b981' : '#475569'} style={{ marginTop: '16px' }} />
+                        <textarea
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSearch(e);
+                                }
+                            }}
                             onFocus={() => setIsFocused(true)}
                             onBlur={() => setIsFocused(false)}
                             placeholder="Map a business flow, find architecture debt, or extract logic..."
-                            style={{ flex: 1, background: 'transparent', border: 'none', color: 'white', fontSize: '19px', outline: 'none', padding: '14px 0' }}
+                            rows={6}
+                            style={{ 
+                                flex: 1, 
+                                background: 'transparent', 
+                                border: 'none', 
+                                color: 'white', 
+                                fontSize: '19px', 
+                                outline: 'none', 
+                                padding: '14px 0',
+                                fontFamily: "'Inter', sans-serif",
+                                resize: 'none',
+                                overflowY: 'auto',
+                                lineHeight: '1.5'
+                            }}
                         />
                         <button
                             type="button"
                             onClick={loadBlueprints}
                             style={{
+                                marginTop: '6px',
                                 background: 'rgba(255,255,255,0.03)',
                                 color: '#94a3b8',
                                 border: '1px solid rgba(255,255,255,0.08)',
@@ -380,6 +458,7 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
                             type="submit"
                             disabled={loading}
                             style={{
+                                marginTop: '6px',
                                 background: loading ? 'rgba(255,255,255,0.03)' : '#10b981',
                                 color: 'white', border: 'none', padding: '14px 32px', borderRadius: '14px',
                                 fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px',
@@ -769,6 +848,13 @@ export const SemanticSearch = ({ selectedBlueprintPath }: SemanticSearchProps) =
                     </motion.div>
                 )}
             </AnimatePresence>
+            
+            {/* Analysis Plan Sidebar */}
+            <AnalysisPlanSidebar 
+                sessionId={sessionId}
+                isOpen={sidebarOpen}
+                onToggle={() => setSidebarOpen(!sidebarOpen)}
+            />
         </div>
     );
 };

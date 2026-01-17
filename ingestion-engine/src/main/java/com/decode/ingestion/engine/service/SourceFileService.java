@@ -28,14 +28,18 @@ public class SourceFileService {
     private final ProjectRepository projectRepository;
     private final StorageService storageService;
     private final ExclusionService exclusionService;
+    private final IngestionEventService ingestionEventService;
 
-    @Transactional
     public void ingestProjectFiles(Project project) {
         Path basePath = Paths.get(project.getBasePath());
         log.info("Ingesting files for project: {} at {}", project.getName(), basePath);
 
         project.setStatus("IN_PROGRESS");
+        project.setStatus("IN_PROGRESS");
         project.setIngestionProgress(0);
+        project.setCurrentFile("Analyzing file structure...");
+        projectRepository.save(project);
+        ingestionEventService.sendProgress(project);
 
         try (Stream<Path> stream = Files.walk(basePath)) {
             long totalFiles = Files.walk(basePath)
@@ -75,25 +79,76 @@ public class SourceFileService {
                                 project.setEstimatedRemainingSeconds((remainingFiles * avgTimePerFile) / 1000);
                             }
 
+                            if (count[0] % 5 == 0) {
+                                ingestionEventService.sendProgress(project);
+                            }
+
                             projectRepository.save(project);
                         });
             }
 
             // Cleanup stale files that were not updated in this run
-            long deletedCount = sourceFileRepository.deleteByProjectAndLastIndexedBefore(project, ingestionStartTime);
-            if (deletedCount > 0) {
-                log.info("Cleaned up {} stale source files for project: {}", deletedCount, project.getName());
-            }
+            cleanupStaleFiles(project, ingestionStartTime);
 
             project.setStatus("COMPLETED");
             project.setIngestionProgress(100);
             project.setCurrentFile(null);
             project.setEstimatedRemainingSeconds(0L);
             projectRepository.save(project);
+            // Save should be immediate with Spring Data JPA - no need for flush
+            ingestionEventService.sendProgress(project); // Final update
+
+            // Small delay to ensure database transaction is committed and visible to other services
+            try {
+                Thread.sleep(1000); // 1 second delay to ensure project is visible to code-parser
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            // TRIGGER DOWNSTREAM PIPELINE
+            triggerCodeParsing(project);
 
         } catch (IOException e) {
             log.error("Failed to walk project path for files", e);
             project.setStatus("FAILED");
+            project.setCurrentFile("Error: " + e.getMessage());
+            projectRepository.save(project);
+            ingestionEventService.sendProgress(project); // Error update
+        }
+    }
+
+    private void triggerCodeParsing(Project project) {
+        try {
+            String parserrUrl = "http://code-parser:8080/api/parser/trigger?projectId=" + project.getId();
+            log.info("🚀 Triggering Code Parser: {} for project: {}", parserrUrl, project.getName());
+            
+            org.springframework.web.client.RestTemplate restTemplate = new org.springframework.web.client.RestTemplate();
+            org.springframework.http.ResponseEntity<String> response = restTemplate.postForEntity(parserrUrl, null, String.class);
+            
+            if (response.getStatusCode().is2xxSuccessful()) {
+                log.info("✅ Code Parser triggered successfully: {}", response.getBody());
+                ingestionEventService.sendEvent("✅ Code parsing triggered for: " + project.getName());
+            } else {
+                log.error("❌ Code Parser returned error status: {}", response.getStatusCode());
+                ingestionEventService.sendEvent("⚠️ Code parser returned error: " + response.getStatusCode());
+            }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.error("❌ Failed to connect to code-parser service. Is it running? Error: {}", e.getMessage());
+            ingestionEventService.sendEvent("❌ Failed to trigger code parser: Service unreachable. Check if code-parser is running.");
+        } catch (org.springframework.web.client.HttpClientErrorException e) {
+            log.error("❌ Code Parser returned HTTP error: {} - {}", e.getStatusCode(), e.getResponseBodyAsString());
+            ingestionEventService.sendEvent("❌ Code parser error: " + e.getStatusCode() + " - Project may not exist in parser database.");
+        } catch (Exception e) {
+            log.error("❌ Failed to trigger code parser: {}", e.getMessage(), e);
+            ingestionEventService.sendEvent("❌ Failed to trigger code parser: " + e.getMessage());
+        }
+    }
+
+    @Transactional
+    public void cleanupStaleFiles(Project project, LocalDateTime ingestionStartTime) {
+        long deletedCount = sourceFileRepository.deleteByProjectAndLastIndexedBefore(project, ingestionStartTime);
+        if (deletedCount > 0) {
+            log.info("Cleaned up {} stale source files for project: {}", deletedCount, project.getName());
         }
     }
 

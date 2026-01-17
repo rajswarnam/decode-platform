@@ -25,6 +25,7 @@ function App() {
   // Refine Blueprint State
   const [showRefineDialog, setShowRefineDialog] = useState(false);
   const [refineBlueprintPath, setRefineBlueprintPath] = useState<string | null>(null);
+  const [refineToast, setRefineToast] = useState<string | null>(null);
 
   const refreshBlueprints = () => {
     if (selectedProject) { // Changed activeProject to selectedProject based on context
@@ -33,6 +34,11 @@ function App() {
         .then(data => setBlueprints(data || []))
         .catch(err => console.error('Failed to fetch blueprints:', err));
     }
+  };
+
+  const showRefineToast = (message: string) => {
+    setRefineToast(message);
+    setTimeout(() => setRefineToast(null), 3000);
   };
 
   useEffect(() => {
@@ -48,6 +54,16 @@ function App() {
   useEffect(() => {
     if (!selectedProject) return;
 
+    // SCENARIO: Domain/Group Selection
+    if (selectedProject.startsWith('DOMAIN:')) {
+      // For now, clear metrics because aggregated stats aren't supported yet
+      setMetrics(null);
+      setMappings([]);
+      setAmbiguities([]);
+      return;
+    }
+
+    // SCENARIO: Single Project Selection
     // Fetch project-specific metrics
     api.getProjectMetrics(selectedProject).then(res => {
       setMetrics(res.data);
@@ -305,11 +321,11 @@ function App() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '16px' }}>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '16px', fontWeight: 700 }}>{metrics?.mappedRulesCount}</div>
-              <div style={{ fontSize: '9px', color: '#64748b' }}>RULES</div>
+              <div style={{ fontSize: '9px', color: '#64748b' }}>{metrics?.isModern ? 'LOGIC NODES' : 'RULES'}</div>
             </div>
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: '16px', fontWeight: 700, color: '#f59e0b' }}>{metrics?.ambiguityCount}</div>
-              <div style={{ fontSize: '9px', color: '#64748b' }}>AMBIGUITIES</div>
+              <div style={{ fontSize: '9px', color: '#64748b' }}>{metrics?.isModern ? 'ISSUES' : 'AMBIGUITIES'}</div>
             </div>
           </div>
         </div>
@@ -342,10 +358,25 @@ function App() {
                   cursor: 'pointer'
                 }}
               >
-                <option value="" disabled>Select Project Context</option>
-                {projects.map(p => (
-                  <option key={p.id} value={p.name} style={{ background: '#0f172a' }}>{p.name}</option>
-                ))}
+                <option value="" disabled>Select Context</option>
+
+                {/* 1. DOMAIN GROUPS */}
+                <optgroup label="Project Groups">
+                  {Array.from(new Set(projects.map(p => p.domain).filter(d => d && d !== 'General'))).map(domain => (
+                    <option key={`domain-${domain}`} value={`DOMAIN:${domain}`} style={{ background: '#0f172a' }}>
+                      📂 {domain} (Group)
+                    </option>
+                  ))}
+                </optgroup>
+
+                {/* 2. INDIVIDUAL PROJECTS */}
+                <optgroup label="Individual Projects">
+                  {projects.map(p => (
+                    <option key={p.id} value={p.name} style={{ background: '#0f172a' }}>
+                      {p.name}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
             </div>
             {selectedProject && (
@@ -390,7 +421,10 @@ function App() {
           </section>
         ) : (
           <section style={{ height: 'calc(100vh - 84px)', overflowY: 'auto' }}>
-            <SemanticSearch selectedBlueprintPath={selectedBlueprint} />
+            <SemanticSearch
+              selectedBlueprintPath={selectedBlueprint}
+              domain={selectedProject.startsWith('DOMAIN:') ? selectedProject.substring(7) : selectedProject}
+            />
           </section>
         )}
       </main>
@@ -407,8 +441,8 @@ function App() {
               ambiguities.map((a: any) => (
                 <AmbiguityResolver
                   key={a.id}
-                  tag={a.tag}
-                  candidates={a.candidates}
+                  tag={a.tag || a.attributeTag || a.title || 'Ambiguous Mapping'}
+                  candidates={a.candidates || []}
                   onSelect={(selectedSymbolId: string) => handleResolveAmbiguity(a.id, selectedSymbolId)}
                 />
               ))
@@ -440,9 +474,10 @@ function App() {
         {showRefineDialog && refineBlueprintPath && (
           <RefineDialog
             blueprintPath={refineBlueprintPath}
+            project={selectedProject.startsWith('DOMAIN:') ? selectedProject.substring(7) : selectedProject}
             onClose={() => setShowRefineDialog(false)}
-            onRefine={(prompt, updateExisting) => {
-              console.log('Refinement started:', prompt, updateExisting);
+            onRefineComplete={(result, updateExisting) => {
+              console.log('Refinement complete:', result);
               refreshBlueprints();
               if (updateExisting) {
                 if (selectedBlueprint === refineBlueprintPath) {
@@ -451,10 +486,33 @@ function App() {
                   setTimeout(() => setSelectedBlueprint(current), 50);
                 }
               }
+              const message = updateExisting
+                ? 'Blueprint updated successfully.'
+                : `Blueprint refined to v${result.version ?? 'new'}.`;
+              showRefineToast(message);
             }}
           />
         )}
       </AnimatePresence>
+
+      {refineToast && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          background: 'rgba(15, 23, 42, 0.95)',
+          border: '1px solid rgba(16, 185, 129, 0.4)',
+          borderRadius: '12px',
+          padding: '12px 16px',
+          color: '#e2e8f0',
+          fontSize: '13px',
+          fontWeight: 600,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+          zIndex: 2001
+        }}>
+          {refineToast}
+        </div>
+      )}
     </div>
   );
 }

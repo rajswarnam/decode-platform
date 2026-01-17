@@ -1,3 +1,6 @@
+---
+trigger: always_on
+---
 
 # Master Architecture Plan
 
@@ -35,10 +38,18 @@ This master plan outlines the strategic deployment of the Decode.AI platform, de
     *   **Async Queueing**: Process tasks via a persistent Postgres queue with exponential backoff on 429 errors.
 *   **Acceptance Criteria**: Successful file extraction and metadata logging for polyglot repositories.
 
-### Step 2.2: Specialized Language Agents
-*   **Execution**: Deploy specialized agents (Java, COBOL, React, SQL) using Tree-sitter for AST extraction and symbol mapping.
-*   **Requirement**: Domain-specific grammar files for each target language.
-*   **Acceptance Criteria**: Accurate identification of service endpoints, library calls, and MQ topic mappings.
+### Step 2.2: Polyglot Code Parser (Agentic Service)
+*   **Execution**: Deploy a centralized `code-parser` agent implementing the **Polyglot Interface Pattern** (Rule 15).
+*   **Capabilities**:
+    *   **Automated Grammar Routing**: Dynamically select Tree-sitter grammars (Java, C, COBOL) based on file extension.
+    *   **Unified AST Storage**: Normalize symbols from all languages into the common `symbols` table.
+*   **Requirement**: Spring AI MCP with registered `@Tool` functions for each language (`parseJava`, `parseC`).
+*   **Acceptance Criteria**: Single JVM process successfully parsing mixed-language repositories without restart.
+### Step 2.3: Vendor Interface & ACLF Mapping (Fusion Argo Tool)
+*   **Execution**: Implement `mapAclfToC` as a Tool within the Polyglot Parser agent.
+*   **Logic**: Parse `.ACLF` XML configuration and perform in-memory joining with C-Struct symbols to populate `aclf_mappings`.
+*   **Requirement**: Strict linkage between abstract Vendor Tags and physical Code Offsets.
+*   **Acceptance Criteria**: Automated generation of the "Attribute-to-Storage" lineage map.
 
 ### Step 2.4: Vendor Interface & ACLF Mapping
 *   **Execution**: Deploy a **Config-to-Logic Agent** to parse `.ACLF` and vendor config files.
@@ -62,14 +73,6 @@ This master plan outlines the strategic deployment of the Decode.AI platform, de
 *   **Execution**: Map extracted C/MQ attributes to new zConnect JSON schemas.
 *   **Requirement**: Auto-generate "Migration Mapping Specifications" by tracing Angular UI -> ASPX -> C Core -> MQ.
 *   **Acceptance Criteria**: 80% reduction in manual discovery time for message attributes.
-
-### Step 3.5: LLM Gateway Agent (Service)
-*   **Execution**: Deploy `llm-gateway-service` acting as local proxy between internal agents and Azure OpenAI.
-*   **Requirement**:
-    *   **Proxying**: Translates standard JSON to Azure format.
-    *   **Governance**: Token Bucket for 250k TPM.
-    *   **Authentication**: Manages Azure Client IDs/Secrets centrally.
-*   **Acceptance Criteria**: All LLM traffic routed through Gateway; zero 429 errors.
 
 ## Phase 4: User Interaction & Agentic Orchestration
 **Goal**: Provide an intelligent workbench for developers to interrogate the codebase.

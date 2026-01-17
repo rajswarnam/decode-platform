@@ -68,6 +68,15 @@ public class ExclusionService {
                 return shouldExcludeDirectory(filePath);
             }
 
+            // Check if file is inside an excluded directory (e.g., .git/, target/, etc.)
+            String pathString = filePath.toString().toLowerCase().replace('\\', '/');
+            for (String excludedDir : EXCLUDED_DIRS) {
+                if (pathString.contains("/" + excludedDir + "/") || pathString.contains("/" + excludedDir)) {
+                    log.debug("Excluded (Inside excluded directory): {}", filePath);
+                    return true;
+                }
+            }
+
             String fileName = filePath.getFileName().toString().toLowerCase();
             String extension = getFileExtension(fileName);
 

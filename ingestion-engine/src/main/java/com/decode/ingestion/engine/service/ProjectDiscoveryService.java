@@ -22,23 +22,34 @@ public class ProjectDiscoveryService {
     private final ProjectRepository projectRepository;
     private final ExclusionService exclusionService;
     private final SourceFileService sourceFileService;
+    private final IngestionEventService ingestionEventService;
 
-    public void discoverAndRegisterProjects(String rootPathString, String gitUrl, String contextName) {
+    public void discoverAndRegisterProjects(String rootPathString, String gitUrl, String contextName, String targetDomain) {
         Path rootPath = Paths.get(rootPathString);
         if (!Files.exists(rootPath) || !Files.isDirectory(rootPath)) {
             log.error("Invalid root path: {}", rootPathString);
+            ingestionEventService.sendEvent("ERROR: Invalid root path: " + rootPathString);
             return;
         }
 
+        ingestionEventService.sendEvent("🔍 Starting project discovery in: " + contextName);
+        
         // Track exclusion stats
         AtomicInteger totalDirs = new AtomicInteger(0);
         AtomicInteger excludedDirs = new AtomicInteger(0);
+        AtomicInteger projectsFound = new AtomicInteger(0);
 
         try {
             Files.walkFileTree(rootPath, new SimpleFileVisitor<Path>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
                     totalDirs.incrementAndGet();
+                    
+                    // Send progress every 100 directories
+                    if (totalDirs.get() % 100 == 0) {
+                        ingestionEventService.sendEvent(String.format("📂 Scanned %d directories, found %d projects...", 
+                            totalDirs.get(), projectsFound.get()));
+                    }
 
                     // Use ExclusionService for fiscal protection
                     if (exclusionService.shouldExclude(dir)) {
@@ -47,9 +58,19 @@ public class ProjectDiscoveryService {
                         return FileVisitResult.SKIP_SUBTREE;
                     }
 
+                    // Filter out non-relevant test/e2e folders
+                    String pathStr = dir.toString();
+                    if (pathStr.contains("/e2e/") || pathStr.endsWith("/e2e") || 
+                        pathStr.contains("/test/") || pathStr.endsWith("/test")) {
+                        log.debug("Skipping test/e2e directory: {}", dir);
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+
                     List<String> detectedTech = detectTechStack(dir);
                     if (!detectedTech.isEmpty()) {
-                        registerProject(dir, detectedTech, gitUrl, rootPath, contextName);
+                        projectsFound.incrementAndGet();
+                        ingestionEventService.sendEvent("✅ Found project: " + dir.getFileName() + " [" + String.join(", ", detectedTech) + "]");
+                        registerProject(dir, detectedTech, gitUrl, rootPath, contextName, targetDomain);
                         // Prevent monorepo clutter: once a project is found, don't register sub-modules
                         // as separate projects
                         return FileVisitResult.SKIP_SUBTREE;
@@ -60,9 +81,19 @@ public class ProjectDiscoveryService {
 
             // Log exclusion statistics
             exclusionService.logExclusionStats(totalDirs.get(), excludedDirs.get());
+            
+            ingestionEventService.sendEvent(String.format("✅ Discovery complete: %d projects found, %d directories scanned, %d excluded", 
+                projectsFound.get(), totalDirs.get(), excludedDirs.get()));
+            
+            // Mark the placeholder parent project as completed if it exists
+            updateProjectStatus(contextName, "DISCOVERY_COMPLETED");
+
+            // Log exclusion statistics
+            exclusionService.logExclusionStats(totalDirs.get(), excludedDirs.get());
 
         } catch (IOException e) {
             log.error("Error walking file tree", e);
+            ingestionEventService.sendEvent("ERROR: " + e.getMessage());
         }
     }
 
@@ -93,13 +124,18 @@ public class ProjectDiscoveryService {
         return tech;
     }
 
-    private void registerProject(Path dir, List<String> techStack, String gitUrl, Path rootPath, String contextName) {
+    private void registerProject(Path dir, List<String> techStack, String gitUrl, Path rootPath, String contextName, String targetDomain) {
         String projectName = dir.getFileName().toString();
 
         // If this is the root directory we were searching and we have a context name
-        // (zip/repo name), use it
-        if (dir.equals(rootPath) && contextName != null && !contextName.isEmpty()) {
-            projectName = contextName;
+        // (zip/repo name), use it. Or namespace sub-projects.
+        if (contextName != null && !contextName.isEmpty()) {
+            if (dir.equals(rootPath)) {
+                projectName = contextName;
+            } else {
+                String relativePath = rootPath.relativize(dir).toString();
+                projectName = contextName + "/" + relativePath;
+            }
         }
         // If finding multiple projects with same folder name (unlikely in flat
         // structure but possible in monorepo),
@@ -116,7 +152,11 @@ public class ProjectDiscoveryService {
         } else {
             project = new Project();
             project.setName(projectName);
-            project.setDomain(System.getenv("PROJECT_DOMAIN") != null ? System.getenv("PROJECT_DOMAIN") : "General");
+            
+            String domain = (targetDomain != null && !targetDomain.isEmpty()) ? targetDomain : 
+                           (System.getenv("PROJECT_DOMAIN") != null ? System.getenv("PROJECT_DOMAIN") : "General");
+            project.setDomain(domain);
+            
             project.setBasePath(dir.toAbsolutePath().toString());
             project.setGitUrl(gitUrl);
             project.setTechStack(techStack);
@@ -131,7 +171,73 @@ public class ProjectDiscoveryService {
         sourceFileService.ingestProjectFiles(project);
     }
 
+    public void registerPendingProject(String repoName, String gitUrl, String basePath, String targetDomain) {
+        Project p;
+        Optional<Project> existing = projectRepository.findByName(repoName);
+        if (existing.isPresent()) {
+            p = existing.get();
+            p.setStatus("PENDING_CLONE");
+            p.setGitUrl(gitUrl);
+            p.setBasePath(basePath);
+            p.setIngestionProgress(0);
+            projectRepository.save(p);
+            log.info("Updated existing project {} status to PENDING_CLONE", repoName);
+        } else {
+            p = new Project();
+            p.setName(repoName);
+            p.setGitUrl(gitUrl);
+            p.setBasePath(basePath);
+            
+            String domain = (targetDomain != null && !targetDomain.isEmpty()) ? targetDomain : 
+                           (System.getenv("PROJECT_DOMAIN") != null ? System.getenv("PROJECT_DOMAIN") : "General");
+            p.setDomain(domain);
+            
+            p.setStatus("PENDING_CLONE");
+            p.setIngestionProgress(0);
+            projectRepository.save(p);
+            log.info("Registered new pending project: {}", repoName);
+        }
+        ingestionEventService.sendProgress(p);
+    }
+
+    public void updateProjectStatus(String repoName, String status) {
+        Optional<Project> existing = projectRepository.findByName(repoName);
+        if (existing.isPresent()) {
+            Project p = existing.get();
+            p.setStatus(status);
+            projectRepository.save(p);
+            ingestionEventService.sendProgress(p);
+            log.info("Updated project {} status to {}", repoName, status);
+        }
+    }
+
     public List<Project> getAllProjects() {
         return projectRepository.findAll();
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void cleanupDuplicates() {
+        List<Project> all = projectRepository.findAll();
+        for (Project p : all) {
+            // Remove 'Automated Scan' duplicates only.
+            // CAUTION: Do not delete common module names like 'admin' or 'camel' as they are valid parts of the repo.
+            if (p.getName().startsWith("Automated Scan")) {
+                
+                log.info("Refinery: Removing temporary scan project: {}", p.getName());
+                // Force clean external references to avoid FK violation
+                projectRepository.deleteAclfMappings(p.getId());
+                projectRepository.delete(p);
+            }
+        }
+    }
+
+    @org.springframework.transaction.annotation.Transactional
+    public void deleteAllProjects() {
+        List<Project> all = projectRepository.findAll();
+        for (Project p : all) {
+            log.info("Manual Cleanup: Deleting project: {}", p.getName());
+            projectRepository.deleteAclfMappings(p.getId());
+            projectRepository.delete(p);
+        }
     }
 }

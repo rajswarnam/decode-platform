@@ -1,6 +1,15 @@
 package com.decode.context.orchestrator.service;
 
 import com.decode.context.orchestrator.domain.Symbol;
+import com.decode.context.orchestrator.repository.ProjectRepository;
+import com.decode.context.orchestrator.repository.SourceFileRepository;
+import com.decode.context.orchestrator.agent.AgentOrchestrator;
+import io.minio.GetObjectArgs;
+import io.minio.MinioClient;
+import java.io.InputStream;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.stream.Collectors;
 import com.decode.context.orchestrator.repository.SymbolRepository;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
@@ -28,7 +37,11 @@ public class SemanticExplorerService {
     private final VectorStore vectorStore;
     private final ChatClient.Builder chatClientBuilder;
     private final MinioClient minioClient;
+    private final AgentOrchestrator agentOrchestrator;
     private final SymbolRepository symbolRepository;
+
+    private final ProjectRepository projectRepository;
+    private final SourceFileRepository sourceFileRepository;
 
     @Value("${minio.bucket}")
     private String bucket;
@@ -38,174 +51,115 @@ public class SemanticExplorerService {
     public void exploreStream(String query, String domain, Consumer<String> progressConsumer,
             Consumer<String> answerChunkConsumer) {
         log.info("Executing Discovery: '{}'", query);
-        if (progressConsumer != null)
-            progressConsumer.accept("Initiating multi-pass logic discovery...");
+        
+        String queryLower = query.toLowerCase();
+        
+        // EXPANDED REGEX: Detect queries that need domain-aware analysis
+        // Includes: blueprint keywords, business/domain questions, "what/explain/tell me about" queries
+        boolean needsAgentSwarm = queryLower.matches(".*(blueprint|re-?design|re-?build|spec|architect|overview|analysis|map|structure|comprehensive|full|brd|requirements|documentation).*")
+            || queryLower.matches(".*(what|explain|tell me|describe|show me|help me understand).*")
+            || queryLower.matches(".*(business|usecase|use case|use-case|functionality|purpose|addresses|handles).*")
+            || queryLower.matches(".*(new to|getting started|introduction|overview of).*")
+            || (domain != null && !domain.equalsIgnoreCase("General")); // Always use swarm for domain-specific queries
 
-        // 1. DIVERSE SEARCH
+        if (progressConsumer != null)
+            progressConsumer.accept(needsAgentSwarm ? "Initiating Multi-Agent Analysis..." : "Scanning Codebase...");
+
+        StringBuilder contextBuilder = new StringBuilder();
+
+        // 1. META-CONTEXT INJECTION & AGENT SWARM (For domain-aware queries)
+        if (needsAgentSwarm) {
+            progressConsumer.accept("Initiating Decode Protocol: Multi-Agent Swarm Activation...");
+            injectProjectStructure(contextBuilder, domain, progressConsumer);
+            
+            // Delegate to Agent Orchestrator (includes Lexical Scout + Workers + QA)
+            // Pass domain for project filtering
+            agentOrchestrator.executeSwarm(query, contextBuilder.toString(), domain, progressConsumer, 
+               finalBlueprint -> answerChunkConsumer.accept(finalBlueprint));
+            return;
+        }
+
+        // 2. DIVERSE VECTOR SEARCH
         var broadSearch = SearchRequest.builder().query(query).topK(100);
         if (domain != null && !domain.equalsIgnoreCase("General")) {
             broadSearch.filterExpression("domain == '" + domain + "'");
         }
         List<Document> allResults = new ArrayList<>(vectorStore.similaritySearch(broadSearch.build()));
 
-        // 2. LOGIC SCAN
-        String domainKeyword = query.toLowerCase()
+        // 3. LOGIC SCAN (Heuristic for "Business Logic")
+        // Force-include some Service/Controller files to give flavor for detailed queries
+        if (needsAgentSwarm || queryLower.contains("business") || queryLower.contains("usecase")) {
+            allResults.addAll(vectorStore.similaritySearch(
+                    SearchRequest.builder().query("Service Controller Manager Business Logic").topK(20).build()));
+        }
+        
+        // ... (Existing Logic Scan for User Query Keywords) ...
+         String domainKeyword = query.toLowerCase()
                 .replaceAll(
                         "\\b(what|are|the|different|services|usecases|functionality|how|is|in|a|an|exists|to|of|related)\\b",
                         "")
                 .replaceAll("[\\?\\.]", "")
                 .trim();
 
-        if (!domainKeyword.isEmpty()) {
-            if (progressConsumer != null)
-                progressConsumer.accept("Scanning for Production Logic matching: '" + domainKeyword + "'...");
-            allResults.addAll(vectorStore.similaritySearch(
+        if (!domainKeyword.isEmpty() && !needsAgentSwarm) {
+             allResults.addAll(vectorStore.similaritySearch(
                     SearchRequest.builder().query(domainKeyword + " ServiceImpl Controller").topK(30).build()));
         }
 
-        // 3. Resolve & Filter
+        // 4. Resolve & Filter Symbols (Existing Logic)
         List<SymbolMetadata> enrichedSymbols = new ArrayList<>();
+        Set<String> processedFiles = new HashSet<>();
+        
         for (Document doc : allResults) {
             String sid = (String) doc.getMetadata().get("symbol_id");
-            if (sid == null)
-                continue;
+            if (sid == null) continue;
             symbolRepository.findById(UUID.fromString(sid)).ifPresent(s -> {
-                if (s.getSourceFile() != null)
+                if (s.getSourceFile() != null && !processedFiles.contains(s.getSourceFile().getFilePath())) {
                     enrichedSymbols.add(new SymbolMetadata(s, doc.getScore()));
+                    processedFiles.add(s.getSourceFile().getFilePath());
+                }
             });
         }
 
-        // 4. ARCHITECTURE PRIORITY SORT
+        // 5. Build Context from Vectors
+        if (progressConsumer != null)
+            progressConsumer.accept("Synthesizing " + enrichedSymbols.size() + " code vectors...");
+        
+        int included = 0;
+        // Prioritize: Move Main/Impl/Controller to top
         enrichedSymbols.sort((a, b) -> {
-            String pA = (a.symbol.getSourceFile().getFilePath() != null)
-                    ? a.symbol.getSourceFile().getFilePath().toLowerCase()
-                    : "";
-            String pB = (b.symbol.getSourceFile().getFilePath() != null)
-                    ? b.symbol.getSourceFile().getFilePath().toLowerCase()
-                    : "";
-            int scoreA = 0;
-            if (pA.contains("/main/"))
-                scoreA += 100;
-            if (pA.contains("impl") || pA.contains("controller"))
-                scoreA += 100;
-            if (pA.contains("test"))
-                scoreA -= 500;
-            int scoreB = 0;
-            if (pB.contains("/main/"))
-                scoreB += 100;
-            if (pB.contains("impl") || pB.contains("controller"))
-                scoreB += 100;
-            if (pB.contains("test"))
-                scoreB -= 500;
-            return Integer.compare(scoreB, scoreA);
+             // ... (Keep existing sort logic or simplify) ...
+             return Double.compare(b.score, a.score); // Simple Score sort for now, rely on Meta-Context
         });
 
-        // 5. Build Context
-        if (progressConsumer != null)
-            progressConsumer.accept("Synchronizing context files and removing test noise...");
-        StringBuilder contextBuilder = new StringBuilder();
-        Set<String> seenFileNames = new HashSet<>();
-        int included = 0;
         for (SymbolMetadata sm : enrichedSymbols) {
-            String fName = sm.symbol.getSourceFile().getFileName();
             String sKey = sm.symbol.getSourceFile().getStorageKey();
-            if (sKey == null || seenFileNames.contains(fName))
-                continue;
-            String code = fetchSourceFromMinio(sKey, 800);
-            if (contextBuilder.length() + code.length() > MAX_CONTEXT_CHARS)
-                break;
-            boolean isPrimary = sKey.contains("/main/") && (sKey.contains("Impl") || sKey.contains("Controller"));
-            contextBuilder.append("\n--- [").append(isPrimary ? "PRIMARY IMPLEMENTATION" : "CONTEXTUAL SUPPORT")
-                    .append("] Path: ").append(sm.symbol.getSourceFile().getFilePath()).append(" ---\n");
+            if (sKey == null) continue;
+            
+            // Avoid duplicating if Meta-Context already grabbed it (unlikely but possible)
+            if (contextBuilder.length() > MAX_CONTEXT_CHARS) break;
+            
+            String code = fetchSourceFromMinio(sKey, 500); // Limit vector files to 500 lines to save space for Meta
+            contextBuilder.append("\n--- [Reference Component] ").append(sm.symbol.getSourceFile().getFilePath()).append(" ---\n");
             contextBuilder.append(code).append("\n");
-            seenFileNames.add(fName);
             included++;
         }
 
         // 6. STREAMING REASONING
-        if (progressConsumer != null)
-            progressConsumer.accept("Reasoning over " + included + " production files...");
+        // Note: This path only executes for simple queries (needsAgentSwarm was false)
         String prompt = String.format(
-                """
-                        You are a Senior Solutions Architect creating a COMPREHENSIVE REDEVELOPMENT BLUEPRINT for enterprise applications.
-                        Your goal is to provide sufficient detail for a development team to rebuild this system from scratch.
-
-                        **CRITICAL FORMATTING REQUIREMENTS:**
-                        1. Output ONLY well-formatted Markdown with proper spacing between ALL words
-                        2. Use headers (##, ###) to organize sections
-                        3. Use bullet points (-) for lists
-                        4. Wrap code/method names in backticks: `methodName()`
-                        5. Use code blocks (```) for schemas, examples, and multi-line code
-                        6. Add blank lines between sections for readability
-
-                        **COMPREHENSIVE ANALYSIS FRAMEWORK:**
-
-                        ## 1. Use Cases & API Contracts
-                        - List all endpoints with HTTP methods, paths, and descriptions
-                        - Document request/response formats
-                        - Specify query parameters, path variables, and headers
-
-                        ## 2. Data Models & Schemas
-                        - Extract ALL domain objects, DTOs, and entities
-                        - Document field names, data types, and constraints (required, max length, format)
-                        - Show relationships (one-to-many, many-to-many)
-                        - Include database table schemas if evident
-                        - Provide example JSON payloads
-
-                        ## 3. Business Rules & Validation Logic
-                        - Document all validation rules (email format, password strength, etc.)
-                        - Explain business constraints (e.g., "account name must be unique")
-                        - Describe calculation logic (e.g., interest rates, totals)
-                        - List any constants, enums, or configuration values
-
-                        ## 4. Security & Authorization
-                        - Identify authentication mechanism (JWT, OAuth, Basic Auth, etc.)
-                        - Document required roles, scopes, or permissions per endpoint
-                        - Explain how Principal/User context is established
-                        - Note any special security rules (e.g., "users can only access their own data")
-
-                        ## 5. Error Handling & Edge Cases
-                        - List possible error scenarios (not found, duplicate, validation failure)
-                        - Document expected HTTP status codes (200, 400, 401, 404, 500)
-                        - Explain exception handling patterns
-                        - Describe fallback or retry logic
-
-
-                        ## 6. Dependencies & Integrations
-                        - Identify external services called (databases, APIs, message queues, SMTP, SMS gateways)
-                        - **For each external service, document:**
-                          - **Payload/Request Schema**: What data is sent? (field names, types, example values)
-                          - **Response Schema**: What data is received back?
-                          - **Example JSON/XML**: Provide concrete examples of request/response bodies
-                          - **Authentication**: How does the service authenticate? (API keys, OAuth, etc.)
-                        - Document repository/DAO methods and their purposes
-                        - List third-party libraries or frameworks used
-                        - Explain any event publishing or subscription patterns
-
-                        ## 7. State Management & Transactions
-                        - Describe transaction boundaries (@Transactional usage)
-                        - Explain concurrency control (optimistic/pessimistic locking)
-                        - Document audit logging or change tracking
-                        - Note any caching strategies
-
-                        ## 8. Non-Functional Requirements (if evident)
-                        - Performance considerations (pagination, lazy loading)
-                        - Scalability patterns (stateless design, async processing)
-                        - Rate limiting or throttling
-                        - Logging and monitoring hooks
-
-                        **Source Code Context:**
-                        %s
-
-                        **User Question:**
-                        %s
-
-                        Provide a COMPLETE, production-ready blueprint with all 8 dimensions covered. Use clear Markdown formatting with proper spacing.
-                        """,
-                contextBuilder.toString(), query);
+            """
+                    You are a Senior Code Analyst. Answer based STRICTLY on the code provided.
+                    
+                    Context:
+                    %s
+                    
+                    Question:
+                    %s
+                    """,
+             contextBuilder.toString(), query);
 
         log.info("Requesting streaming synthesis...");
-        // Use toIterable() to synchronously iterate tokens on the executor thread
         chatClientBuilder.build().prompt(prompt).stream().chatResponse().toIterable().forEach(response -> {
             if (response.getResult() != null && response.getResult().getOutput() != null) {
                 String text = response.getResult().getOutput().getText();
@@ -216,7 +170,65 @@ public class SemanticExplorerService {
         });
 
         if (progressConsumer != null)
-            progressConsumer.accept("Mapping complete.");
+            progressConsumer.accept("Analysis complete.");
+    }
+    
+    private void injectProjectStructure(StringBuilder context, String domain, Consumer<String> progressConsumer) {
+        if (progressConsumer != null) progressConsumer.accept("Mapping Project Anatomy (Modules & Configs)...");
+        
+        context.append("\n=== PROJECT ANATOMY & STRUCTURE ===\n");
+        
+        // 1. List Modules/Projects - FILTER BY DOMAIN/PROJECT IF SPECIFIED
+        List<com.decode.context.orchestrator.domain.Project> projects;
+        if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+            // Try to find by project name first
+            Optional<com.decode.context.orchestrator.domain.Project> byName = projectRepository.findByName(domain);
+            if (byName.isPresent()) {
+                // Exact match - single project
+                projects = java.util.Collections.singletonList(byName.get());
+                if (progressConsumer != null) progressConsumer.accept("Filtering by project: " + domain);
+            } else {
+                // Try filtering by domain field (groups multiple projects)
+                projects = projectRepository.findByDomain(domain);
+                if (projects.isEmpty()) {
+                    // Fallback: partial name match (e.g., "openmrs" matches "openmrs-distro-referenceapplication")
+                    projects = projectRepository.findByNameContainingIgnoreCase(domain);
+                }
+                if (progressConsumer != null) progressConsumer.accept("Filtering projects by domain/name: " + domain + " (" + projects.size() + " found)");
+            }
+        } else {
+            projects = projectRepository.findAll();
+        }
+        
+        context.append("Modules Found: ").append(projects.size()).append("\n");
+        for (var p : projects) {
+            context.append("- Module: ").append(p.getName())
+                   .append(" [Stack: ").append(p.getTechStack() != null ? String.join(",", p.getTechStack()) : "Unknown").append("]")
+                   .append(" (Path: ").append(p.getBasePath()).append(")\n");
+            
+            // 2. Fetch README or POM for the root of important modules
+            try {
+                // Heuristic: If it's a root module or major service
+                if (p.getName().equals("metasfresh") || p.getName().endsWith("backend") || p.getName().endsWith("frontend")) {
+                    // Try to fetch README.md
+                    String readmeKey = p.getId() + "/README.md"; // Assuming ingestion stored it
+                    String readme = fetchSourceFromMinio(readmeKey, 100);
+                    if (!readme.contains("available")) {
+                        context.append("\n--- [CONFIG] ").append(p.getName()).append("/README.md ---\n").append(readme).append("\n");
+                    }
+                    
+                    // Try to fetch pom.xml
+                    String pomKey = p.getId() + "/pom.xml";
+                    String pom = fetchSourceFromMinio(pomKey, 50); // Just headers
+                    if (!pom.contains("available")) {
+                        context.append("\n--- [CONFIG] ").append(p.getName()).append("/pom.xml ---\n").append(pom).append("\n");
+                    }
+                }
+            } catch (Exception e) {
+                // ignore
+            }
+        }
+        context.append("\n=====================================\n\n");
     }
 
     private String fetchSourceFromMinio(String storageKey, int maxLines) {
@@ -232,9 +244,11 @@ public class SemanticExplorerService {
 
     private static class SymbolMetadata {
         final Symbol symbol;
+        final double score;
 
         SymbolMetadata(Symbol s, double sc) {
             this.symbol = s;
+            this.score = sc;
         }
     }
 

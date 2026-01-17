@@ -31,3 +31,5 @@ This roadmap defines the transition from a technical code-parser to a stakeholde
 
 ## 3. Resume Instructions
 To restart this work, reference the `ui-prototype-v1.md` mission and the `patent_art_trust_framework.png` for visual style consistency.
+
+Antigravity, resume Phase 4.2. Read docs/architecture/ui-design-roadmap.md and start the first mission in missions/ui-prototype-v1.md.

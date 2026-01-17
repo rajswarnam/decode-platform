@@ -19,7 +19,7 @@ spring:
             non_contextual_creation: true
 
 minio:
-  endpoint: http://host.docker.internal:9000
+  endpoint: http://minio:9000
   accessKey: minioadmin
   secretKey: minioadmin
   bucket: decode-source-code

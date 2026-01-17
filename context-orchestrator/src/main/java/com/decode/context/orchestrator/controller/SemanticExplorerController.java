@@ -2,12 +2,15 @@ package com.decode.context.orchestrator.controller;
 
 import com.decode.context.orchestrator.domain.Project;
 import com.decode.context.orchestrator.domain.AclfMapping;
+import com.decode.context.orchestrator.domain.DependencyLineage;
 import com.decode.context.orchestrator.repository.ProjectRepository;
 import com.decode.context.orchestrator.repository.AclfMappingRepository;
+import com.decode.context.orchestrator.repository.SymbolRepository;
 import com.decode.context.orchestrator.service.SemanticExplorerService;
 import com.decode.context.orchestrator.service.LineageDiscoveryService;
 import com.decode.context.orchestrator.service.BlueprintService;
 import com.decode.context.orchestrator.service.StitchService;
+import com.decode.context.orchestrator.domain.Symbol;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -17,6 +20,10 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Set;
+import java.util.UUID;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import io.minio.MinioClient;
@@ -25,6 +32,7 @@ import com.decode.context.orchestrator.service.ChangeDetectionService;
 import com.decode.context.orchestrator.service.ContextRetrievalService;
 import com.decode.context.orchestrator.repository.BlueprintRefinementRepository;
 import com.decode.context.orchestrator.domain.BlueprintRefinement;
+import com.decode.context.orchestrator.service.SnippetService;
 
 @RestController
 @RequestMapping("/api/v1/explore")
@@ -35,14 +43,26 @@ public class SemanticExplorerController {
 
         private final ProjectRepository projectRepository;
         private final AclfMappingRepository aclfMappingRepository;
+        private final SymbolRepository symbolRepository;
         private final SemanticExplorerService explorerService;
         private final LineageDiscoveryService lineageDiscoveryService;
-        private final BlueprintService blueprintService;
-        private final StitchService stitchService;
         private final MinioClient minioClient;
         private final ChangeDetectionService changeDetectionService;
         private final ContextRetrievalService contextRetrievalService;
         private final BlueprintRefinementRepository blueprintRefinementRepository;
+        private final BlueprintService blueprintService; // Restored as requested
+        private final StitchService stitchService;
+
+        @GetMapping("/blueprint")
+        public ResponseEntity<String> generateBlueprint(@RequestParam String projectName) {
+                try {
+                        String report = blueprintService.generateFusionArgoBlueprint(projectName);
+                        return ResponseEntity.ok(report);
+                } catch (Exception e) {
+                        log.error("Error generating blueprint", e);
+                        return ResponseEntity.status(500).body("Error generating blueprint: " + e.getMessage());
+                }
+        }
 
         @GetMapping("/projects")
         public ResponseEntity<List<Project>> getProjects() {
@@ -80,10 +100,21 @@ public class SemanticExplorerController {
                                                 });
                         } catch (Exception e) {
                                 log.error("Error in streaming reasoning", e);
-                                writer.write("event: error\n");
-                                writer.write("data: " + e.getMessage() + "\n\n");
-                                writer.flush();
+                                try {
+                                        writer.write("event: error\n");
+                                        writer.write("data: Connection error: " + e.getMessage() + "\n\n");
+                                        writer.flush();
+                                } catch (Exception flushError) {
+                                        log.error("Error sending error event", flushError);
+                                }
                         } finally {
+                                try {
+                                        writer.write("event: complete\n");
+                                        writer.write("data: Stream closed\n\n");
+                                        writer.flush();
+                                } catch (Exception e) {
+                                        log.debug("Error closing stream", e);
+                                }
                                 writer.close();
                         }
                 };
@@ -222,13 +253,109 @@ public class SemanticExplorerController {
                 }
         }
 
-        @PostMapping("/refine-blueprint")
-        public ResponseEntity<Map<String, Object>> refineBlueprint(@RequestBody Map<String, String> request) {
+        @GetMapping("/metrics")
+        public ResponseEntity<Map<String, Object>> getProjectMetrics(@RequestParam("project") String projectName) {
+                Project project = projectRepository.findByName(projectName)
+                                .orElseThrow(() -> new RuntimeException("Project not found: " + projectName));
+
+                Double avgConfidence = aclfMappingRepository.calculateAverageConfidenceByProject(project.getId());
+                long totalMappings = aclfMappingRepository.countByProject_Id(project.getId());
+                long ambiguousCount = aclfMappingRepository.countByProject_IdAndMappingStrategy(project.getId(), "AMBIGUOUS_MATCH");
+                
+                // Fallback for Modern Projects (No ACLF)
+                if (totalMappings == 0) {
+                     // If no legacy mappings, count symbols as "Rules" logic nodes
+                     // We need a repository method countByProject, assuming it exists or we use a heuristic
+                     // For now, let's return a distinct flag
+                }
+
+                Map<String, Object> metrics = new HashMap<>();
+                metrics.put("totalTrustScore", avgConfidence != null ? (int) (avgConfidence * 100) : 100); // Default to 100 for modern
+                metrics.put("ambiguityCount", ambiguousCount);
+                // Rename for frontend flexibility
+                metrics.put("mappedRulesCount", totalMappings > 0 ? totalMappings : 0); 
+                metrics.put("isModern", totalMappings == 0);
+                metrics.put("lastScoreRefresh", LocalDateTime.now().toString());
+
+                return ResponseEntity.ok(metrics);
+        }
+
+        @GetMapping("/mappings")
+        public ResponseEntity<List<AclfMapping>> getMappings(@RequestParam("project") String projectName) {
+                return ResponseEntity.ok(aclfMappingRepository.findByProject_Name(projectName));
+        }
+
+        @GetMapping("/ambiguities")
+        public ResponseEntity<List<Map<String, Object>>> getAmbiguities(@RequestParam("project") String projectName) {
+                // Return items with low confidence or specific strategy
+                List<AclfMapping> all = aclfMappingRepository.findByProject_Name(projectName);
+                List<Map<String, Object>> ambiguities = new java.util.ArrayList<>();
+
+                for (AclfMapping m : all) {
+                        if (m.getConfidenceScore() < 0.8 || "AMBIGUOUS_MATCH".equals(m.getMappingStrategy())) {
+                                Map<String, Object> ambiguity = new HashMap<>();
+                                ambiguity.put("id", m.getId());
+                                ambiguity.put("tag", m.getAttributeTag());
+                                ambiguity.put("mappingStrategy", m.getMappingStrategy());
+                                ambiguity.put("confidenceScore", m.getConfidenceScore());
+                                ambiguity.put("description", "Low confidence mapping for " + m.getAttributeTag());
+                                ambiguity.put("timestamp", m.getCreatedAt());
+
+                                List<Map<String, Object>> candidates = new ArrayList<>();
+                                for (Symbol symbol : findCandidateSymbols(projectName, m.getAttributeTag())) {
+                                        Map<String, Object> candidate = new HashMap<>();
+                                        candidate.put("id", symbol.getId());
+                                        candidate.put("name", symbol.getName());
+                                        candidate.put("path",
+                                                        symbol.getSourceFile() != null ? symbol.getSourceFile().getFilePath() : "unknown");
+                                        candidate.put("type", symbol.getCategory());
+                                        candidate.put("affinity", computeAffinity(symbol.getName(), m.getAttributeTag()));
+                                        candidates.add(candidate);
+                                }
+                                ambiguity.put("candidates", candidates);
+                                ambiguities.add(ambiguity);
+                        }
+                }
+
+                return ResponseEntity.ok(ambiguities);
+        }
+
+        @PostMapping("/resolve-ambiguity")
+        public ResponseEntity<Map<String, Object>> resolveAmbiguity(@RequestBody Map<String, String> request) {
+                String mappingId = request.get("mappingId");
+                String selectedSymbolId = request.getOrDefault("selectedSymbolId", "");
+
+                Map<String, Object> response = new HashMap<>();
+                if (mappingId == null || mappingId.isBlank()) {
+                        response.put("status", "error");
+                        response.put("message", "mappingId is required");
+                        return ResponseEntity.badRequest().body(response);
+                }
+
                 try {
-                        String blueprintPath = request.get("blueprintPath");
-                        String refinementPrompt = request.get("refinementPrompt");
-                        String project = request.getOrDefault("project", "piggymetrics");
-                        boolean updateExisting = Boolean.parseBoolean(request.getOrDefault("updateExisting", "false"));
+                        boolean success = stitchService.stitch(UUID.fromString(mappingId), selectedSymbolId);
+                        if (!success) {
+                                response.put("status", "error");
+                                response.put("message", "Unable to resolve ambiguity");
+                                return ResponseEntity.status(404).body(response);
+                        }
+                        response.put("status", "success");
+                        response.put("mappingId", mappingId);
+                        return ResponseEntity.ok(response);
+                } catch (IllegalArgumentException e) {
+                        response.put("status", "error");
+                        response.put("message", "Invalid UUID for mappingId");
+                        return ResponseEntity.badRequest().body(response);
+                }
+        }
+
+        @PostMapping("/refine-blueprint")
+        public ResponseEntity<Map<String, Object>> refineBlueprint(@RequestBody Map<String, Object> request) {
+                try {
+                        String blueprintPath = getStringParam(request, "blueprintPath", "");
+                        String refinementPrompt = getStringParam(request, "refinementPrompt", "");
+                        String project = getStringParam(request, "project", "piggymetrics");
+                        boolean updateExisting = getBooleanParam(request, "updateExisting", false);
 
                         log.info("Refining blueprint: {} with prompt: {}", blueprintPath, refinementPrompt);
 
@@ -344,6 +471,108 @@ public class SemanticExplorerController {
                         response.put("message", e.getMessage());
                         return ResponseEntity.status(500).body(response);
                 }
+        }
+
+        private String getStringParam(Map<String, Object> request, String key, String defaultValue) {
+                Object value = request.get(key);
+                return value != null ? String.valueOf(value) : defaultValue;
+        }
+
+        private boolean getBooleanParam(Map<String, Object> request, String key, boolean defaultValue) {
+                Object value = request.get(key);
+                if (value == null) {
+                        return defaultValue;
+                }
+                if (value instanceof Boolean) {
+                        return (Boolean) value;
+                }
+                return Boolean.parseBoolean(String.valueOf(value));
+        }
+
+        private List<Symbol> findCandidateSymbols(String projectName, String tag) {
+                if (tag == null || tag.isBlank()) {
+                        return List.of();
+                }
+
+                String normalized = tag.replaceAll("[^A-Za-z0-9_]", " ");
+                String[] tokens = normalized.split("[_\\s]+");
+                Set<Symbol> results = new LinkedHashSet<>();
+
+                for (String token : tokens) {
+                        if (token.length() < 3) {
+                                continue;
+                        }
+                        results.addAll(symbolRepository
+                                        .findTop10ByNameContainingIgnoreCaseAndSourceFile_Project_Name(token, projectName));
+                        if (results.size() >= 10) {
+                                break;
+                        }
+                }
+
+                if (results.isEmpty()) {
+                        results.addAll(symbolRepository
+                                        .findTop10ByNameContainingIgnoreCaseAndSourceFile_Project_Name(tag, projectName));
+                }
+
+                List<Symbol> list = new ArrayList<>(results);
+                return list.size() > 10 ? list.subList(0, 10) : list;
+        }
+
+        private double computeAffinity(String symbolName, String tag) {
+                if (symbolName == null || tag == null) {
+                        return 0.6;
+                }
+                String s = symbolName.toLowerCase();
+                String t = tag.replace("_", "").toLowerCase();
+                if (s.equals(t)) {
+                        return 1.0;
+                }
+                if (s.contains(t) || t.contains(s)) {
+                        return 0.85;
+                }
+                return 0.65;
+        }
+
+        private final SnippetService snippetService;
+
+        @GetMapping("/snippet")
+        public ResponseEntity<Map<String, String>> getSnippet(
+                        @RequestParam String storageKey,
+                        @RequestParam int startLine,
+                        @RequestParam int endLine) {
+
+                String code = snippetService.fetchSnippet(storageKey, startLine, endLine);
+                return ResponseEntity.ok(Map.of("code", code));
+        }
+
+        @GetMapping("/lineage/semantic")
+        public ResponseEntity<Map<String, Object>> getSemanticLineage(@RequestParam String projectName) {
+                // Return a simplified graph structure for the frontend
+                List<DependencyLineage> lineages = lineageDiscoveryService.getLineageForProject(projectName);
+
+                List<Map<String, Object>> nodes = new java.util.ArrayList<>();
+                List<Map<String, Object>> links = new java.util.ArrayList<>();
+
+                // Add the main project node
+                nodes.add(Map.of("id", projectName, "type", "service", "label", projectName));
+
+                for (DependencyLineage l : lineages) {
+                        String target = l.getTargetServiceName();
+                        if (target == null || target.isBlank())
+                                continue;
+
+                        // Add target node
+                        nodes.add(Map.of("id", target, "type", "dependency", "label", target));
+
+                        // Add link
+                        links.add(Map.of(
+                                        "source", projectName,
+                                        "target", target,
+                                        "label", l.getProtocol(),
+                                        "confidence", l.getConfidenceScore()));
+                }
+
+                return ResponseEntity.ok(Map.of("nodes", nodes, "links", links));
         }
 
         private String buildRefinementPrompt(

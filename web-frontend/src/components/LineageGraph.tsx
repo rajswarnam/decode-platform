@@ -18,8 +18,30 @@ export const LineageGraph = ({ projectName }: Props) => {
         setLoading(true);
         api.getLineage(projectName)
             .then(res => {
-                setNodes(res.data.nodes || []);
-                setEdges(res.data.edges || []);
+                const rawNodes = res.data.nodes || [];
+                const rawLinks = res.data.links || [];
+
+                // Transform nodes to ReactFlow format with layout
+                const formattedNodes = rawNodes.map((n: any, i: number) => ({
+                    id: n.id,
+                    data: { label: n.label },
+                    position: { x: 250 + Math.cos(i) * 150, y: 150 + Math.sin(i) * 150 }, // Simple circular layout
+                    type: i === 0 ? 'input' : 'default',
+                    style: { background: '#1e293b', color: '#f8fafc', border: '1px solid #334155', width: 150 }
+                }));
+
+                // Transform edges
+                const formattedEdges = rawLinks.map((l: any, i: number) => ({
+                    id: `e-${i}`,
+                    source: l.source,
+                    target: l.target,
+                    label: l.label,
+                    animated: true,
+                    style: { stroke: '#10b981' }
+                }));
+
+                setNodes(formattedNodes);
+                setEdges(formattedEdges);
             })
             .catch(err => {
                 console.error("Failed to fetch lineage", err);

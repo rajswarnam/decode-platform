@@ -1,35 +1,81 @@
 import { useState, useEffect } from 'react';
-import { Github, Upload, CheckCircle, Loader2, Server } from 'lucide-react';
+import { Github, Upload, CheckCircle, Loader2, Server, Folder } from 'lucide-react';
 import { api } from '../services/api';
 import type { Project } from '../services/api';
 
 export const IngestionPortal = () => {
     const [gitUrl, setGitUrl] = useState('');
+    const [groupName, setGroupName] = useState('');
     const [status, setStatus] = useState<'idle' | 'loading' | 'success'>('idle');
     const [message, setMessage] = useState('');
     const [projects, setProjects] = useState<Project[]>([]);
 
-    // Poll for status every 2 seconds
+    const [ingestionMessages, setIngestionMessages] = useState<string[]>([]);
+
+    // Stream updates via SSE
     useEffect(() => {
-        const interval = setInterval(async () => {
+        // 1. Initial Load (Snapshot)
+        api.getIngestionStatus().then(r => setProjects(r.data)).catch(console.error);
+
+        // 2. Real-time Updates (Stream)
+        const eventSource = new EventSource(api.ingestionStreamUrl);
+
+        eventSource.addEventListener('init', () => {
+            console.log('SSE Connected');
+            setIngestionMessages(prev => [...prev, '✅ Connected to ingestion service']);
+        });
+
+        eventSource.addEventListener('progress', (event: MessageEvent) => {
             try {
-                const response = await api.getIngestionStatus();
-                setProjects(response.data);
-            } catch (error) {
-                console.error('Failed to fetch ingestion status');
+                const updatedProject: Project = JSON.parse(event.data);
+                setProjects(prev => {
+                    const index = prev.findIndex(p => p.id === updatedProject.id);
+                    if (index !== -1) {
+                        const next = [...prev];
+                        next[index] = updatedProject;
+                        return next;
+                    } else {
+                        // New project detected
+                        return [updatedProject, ...prev];
+                    }
+                });
+            } catch (e) {
+                console.error('Failed to parse progress event', e);
             }
-        }, 2000);
-        return () => clearInterval(interval);
+        });
+
+        eventSource.addEventListener('message', (event: MessageEvent) => {
+            const message = event.data;
+            setIngestionMessages(prev => {
+                const updated = [...prev, message];
+                // Keep only last 20 messages
+                return updated.slice(-20);
+            });
+        });
+
+        eventSource.onerror = (err) => {
+            console.error('SSE Connection Error', err);
+            // Don't close on error - allow reconnection attempts
+            // The browser will automatically attempt to reconnect for SSE
+            if (eventSource.readyState === EventSource.CLOSED) {
+                console.warn('SSE connection closed. It will attempt to reconnect automatically.');
+            }
+        };
+
+        return () => {
+            eventSource.close();
+        };
     }, []);
 
     const handleGitIngest = async () => {
         if (!gitUrl) return;
         setStatus('loading');
         try {
-            await api.ingestGit(gitUrl);
+            await api.ingestGit(gitUrl, groupName);
             setStatus('success');
             setMessage('Git repository queued for ingestion successfully.');
             setGitUrl('');
+            setGroupName('');
             setTimeout(() => setStatus('idle'), 5000);
         } catch (error) {
             setStatus('idle');
@@ -42,6 +88,7 @@ export const IngestionPortal = () => {
         setStatus('loading');
         const formData = new FormData();
         formData.append('file', e.target.files[0]);
+        if (groupName) formData.append('groupName', groupName);
 
         try {
             await api.uploadZip(formData);
@@ -104,12 +151,12 @@ export const IngestionPortal = () => {
                     <span style={{
                         marginLeft: '8px',
                         fontSize: '10px',
-                        background: projects.filter(p => p.status === 'IN_PROGRESS').length > 0 ? 'var(--primary)' : 'rgba(255,255,255,0.1)',
+                        background: projects.filter(p => p.status === 'IN_PROGRESS' || p.status === 'CLONING' || p.status === 'PENDING_CLONE').length > 0 ? 'var(--primary)' : 'rgba(255,255,255,0.1)',
                         color: 'white',
                         padding: '2px 6px',
                         borderRadius: '10px'
                     }}>
-                        {projects.filter(p => p.status === 'IN_PROGRESS').length}
+                        {projects.filter(p => p.status === 'IN_PROGRESS' || p.status === 'CLONING' || p.status === 'PENDING_CLONE').length}
                     </span>
                     {activeTab === 'monitor' && (
                         <div style={{ position: 'absolute', bottom: '-13px', left: 0, right: 0, height: '2px', background: 'var(--primary)' }}></div>
@@ -162,6 +209,28 @@ export const IngestionPortal = () => {
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
+                        {/* Group Name Input (Shared) */}
+                        <div>
+                            <label style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px', display: 'block' }}>PROJECT GROUP (OPTIONAL)</label>
+                            <div className="glass-panel" style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderRadius: '12px' }}>
+                                <Folder size={20} color="#64748b" />
+                                <input
+                                    type="text"
+                                    value={groupName}
+                                    onChange={(e) => setGroupName(e.target.value)}
+                                    placeholder="Enter or select a group name (e.g. 'Metasfresh Core')"
+                                    list="existing-groups"
+                                    style={{ background: 'transparent', border: 'none', color: 'white', width: '100%', outline: 'none', fontSize: '14px' }}
+                                />
+                                <datalist id="existing-groups">
+                                    {Array.from(new Set(projects.map(p => p.domain).filter(d => d && d !== 'General'))).map(group => (
+                                        <option key={group} value={group} />
+                                    ))}
+                                </datalist>
+                            </div>
+                        </div>
+
                         {activeOnboardingMethod === 'git' ? (
                             <div>
                                 <label style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '8px', display: 'block' }}>GIT REPOSITORY URL</label>
@@ -240,13 +309,28 @@ export const IngestionPortal = () => {
                 </div>
             ) : (
                 /* Ingestion Monitor Tab */
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '20px' }}>
-                    {projects.length === 0 && (
-                        <div style={{ gridColumn: '1/ -1', textAlign: 'center', padding: '64px', color: '#64748b' }}>
-                            <Server size={48} style={{ marginBottom: '16px', opacity: 0.2 }} />
-                            <div>No ingestion tasks found in the history.</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    {/* Activity Log */}
+                    {ingestionMessages.length > 0 && (
+                        <div className="glass-panel" style={{ padding: '20px', maxHeight: '200px', overflowY: 'auto' }}>
+                            <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '12px', fontWeight: 600 }}>ACTIVITY LOG</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontFamily: 'monospace', fontSize: '11px' }}>
+                                {ingestionMessages.slice().reverse().map((msg, idx) => (
+                                    <div key={idx} style={{ color: msg.includes('❌') ? '#ef4444' : msg.includes('✅') ? 'var(--primary)' : '#94a3b8' }}>
+                                        {msg}
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '20px' }}>
+                        {projects.length === 0 && (
+                            <div style={{ gridColumn: '1/ -1', textAlign: 'center', padding: '64px', color: '#64748b' }}>
+                                <Server size={48} style={{ marginBottom: '16px', opacity: 0.2 }} />
+                                <div>No ingestion tasks found in the history.</div>
+                            </div>
+                        )}
 
                     {projects.map(project => (
                         <div key={project.id} className="glass-panel" style={{ padding: '24px' }}>
@@ -259,8 +343,14 @@ export const IngestionPortal = () => {
                                     fontSize: '11px',
                                     padding: '4px 10px',
                                     borderRadius: '20px',
-                                    background: project.status === 'COMPLETED' ? 'rgba(16,185,129,0.1)' : 'rgba(59,130,246,0.1)',
-                                    color: project.status === 'COMPLETED' ? 'var(--primary)' : '#3b82f6',
+                                    background: project.status === 'COMPLETED' ? 'rgba(16,185,129,0.1)' : 
+                                               project.status === 'FAILED' ? 'rgba(239,68,68,0.1)' :
+                                               project.status === 'CLONING' || project.status === 'PENDING_CLONE' ? 'rgba(251,191,36,0.1)' :
+                                               'rgba(59,130,246,0.1)',
+                                    color: project.status === 'COMPLETED' ? 'var(--primary)' : 
+                                           project.status === 'FAILED' ? '#ef4444' :
+                                           project.status === 'CLONING' || project.status === 'PENDING_CLONE' ? '#fbbf24' :
+                                           '#3b82f6',
                                     fontWeight: 600
                                 }}>
                                     {(project.status || 'PENDING').replace('_', ' ')}
@@ -290,26 +380,28 @@ export const IngestionPortal = () => {
                                 </div>
                             </div>
 
-                            {project.status === 'IN_PROGRESS' && (
+                            {(project.status === 'IN_PROGRESS' || project.status === 'CLONING' || project.status === 'PENDING_CLONE') && (
                                 <div style={{ background: 'rgba(255,255,255,0.02)', borderRadius: '12px', padding: '16px', border: '1px solid var(--border-light)' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', alignItems: 'center' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#94a3b8', fontSize: '11px' }}>
                                             <Loader2 className="animate-spin" size={14} />
-                                            Currently Ingesting:
+                                            {project.status === 'CLONING' || project.status === 'PENDING_CLONE' ? 'Cloning Repository:' : 'Currently Ingesting:'}
                                         </div>
-                                        <div style={{ textAlign: 'right' }}>
-                                            <div style={{ fontSize: '11px', color: '#64748b' }}>
-                                                Time Left: <span style={{ color: '#f8fafc', fontWeight: 600 }}>{formatTime(project.estimatedRemainingSeconds)}</span>
+                                        {project.status === 'IN_PROGRESS' && (
+                                            <div style={{ textAlign: 'right' }}>
+                                                <div style={{ fontSize: '11px', color: '#64748b' }}>
+                                                    Time Left: <span style={{ color: '#f8fafc', fontWeight: 600 }}>{formatTime(project.estimatedRemainingSeconds)}</span>
+                                                </div>
+                                                <div style={{ fontSize: '10px', color: 'var(--primary)', marginTop: '2px' }}>
+                                                    {(project.totalFiles || 0) - (project.processedFiles || 0)} files remaining
+                                                </div>
                                             </div>
-                                            <div style={{ fontSize: '10px', color: 'var(--primary)', marginTop: '2px' }}>
-                                                {(project.totalFiles || 0) - (project.processedFiles || 0)} files remaining
-                                            </div>
-                                        </div>
+                                        )}
                                     </div>
                                     <div style={{
                                         fontFamily: 'monospace',
                                         fontSize: '12px',
-                                        color: 'var(--primary)',
+                                        color: project.status === 'CLONING' || project.status === 'PENDING_CLONE' ? '#fbbf24' : 'var(--primary)',
                                         whiteSpace: 'nowrap',
                                         overflow: 'hidden',
                                         textOverflow: 'ellipsis',
@@ -317,7 +409,9 @@ export const IngestionPortal = () => {
                                         padding: '8px',
                                         borderRadius: '6px'
                                     }}>
-                                        {project.currentFile || 'Scanning filesystem...'}
+                                        {project.status === 'CLONING' || project.status === 'PENDING_CLONE' 
+                                            ? 'Cloning repository from Git...' 
+                                            : (project.currentFile || 'Scanning filesystem...')}
                                     </div>
                                 </div>
                             )}
@@ -331,6 +425,7 @@ export const IngestionPortal = () => {
                             </div>
                         </div>
                     ))}
+                    </div>
                 </div>
             )}
         </div>

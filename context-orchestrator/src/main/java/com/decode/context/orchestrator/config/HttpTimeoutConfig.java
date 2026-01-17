@@ -14,14 +14,14 @@ public class HttpTimeoutConfig implements WebMvcConfigurer {
     public RestClientCustomizer restClientCustomizer() {
         return restClientBuilder -> restClientBuilder.requestFactory(new SimpleClientHttpRequestFactory() {
             {
-                setConnectTimeout(300_000); // 5 Minutes
-                setReadTimeout(300_000); // 5 Minutes
+                setConnectTimeout(600_000); // 10 Minutes
+                setReadTimeout(600_000); // 10 Minutes
             }
         });
     }
 
     @Override
     public void configureAsyncSupport(AsyncSupportConfigurer configurer) {
-        configurer.setDefaultTimeout(300_000); // 5 Minutes for SSE/Async
+        configurer.setDefaultTimeout(600_000); // 10 Minutes for SSE/Async (comprehensive mode needs more time)
     }
 }

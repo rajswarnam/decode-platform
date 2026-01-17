@@ -15,23 +15,11 @@ public class IngestionRunner implements CommandLineRunner {
 
     @Override
     public void run(String... args) throws Exception {
-        new Thread(() -> {
-            log.info("--- Starting Background Auto-Discovery ---");
-
-            String workspaceRoot = System.getenv("SCAN_ROOT");
-            if (workspaceRoot == null || workspaceRoot.isEmpty()) {
-                workspaceRoot = "/workspace";
-            }
-
-            log.info("Scanning Workspace Root: {}", workspaceRoot);
-
-            try {
-                projectDiscoveryService.discoverAndRegisterProjects(workspaceRoot, "local-git-placeholder",
-                        "Automated Scan");
-                log.info("--- Background Auto-Discovery Complete ---");
-            } catch (Exception e) {
-                log.error("Error during background auto-discovery", e);
-            }
-        }).start();
+        // Run cleanup on startup to remove duplicates from previous bug
+        projectDiscoveryService.cleanupDuplicates();
+        
+        // Disable auto-scan to prevent re-creating duplicates
+        // Note: Git clone logic will handle project registration correctly via API
+        log.info("Startup cleanup complete. Ready for API ingestion.");
     }
 }

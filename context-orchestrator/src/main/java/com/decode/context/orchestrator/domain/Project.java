@@ -15,6 +15,9 @@ public class Project {
     private String name;
     private String domain;
     private String basePath;
+    
+    @jakarta.persistence.ElementCollection(fetch = jakarta.persistence.FetchType.EAGER)
+    private java.util.List<String> techStack;
 
     private Double totalTrustScore;
     private Integer ambiguityCount;

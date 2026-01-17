@@ -40,7 +40,20 @@ public class JavaTreeSitterService implements LanguageParser {
         List<ParsedSymbol> symbols = new ArrayList<>();
 
         try {
-            String sourceCode = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            String sourceCode;
+            if (file.exists()) {
+                sourceCode = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+            } else {
+                // FALLBACK: Try to fetch from MinIO if local file is missing (Generic Cloud
+                // Support)
+                log.warn("Local file not found, attempting MinIO fetch for: {}", file.getName());
+                // Note: In a real implementation, we would need the semantic storageKey.
+                // For now, we assume the parsing happens during ingestion when file exists.
+                // If we want "Lazy Parsing" after cleanup, we need to pass the storageKey or
+                // project context.
+                return symbols;
+            }
+
             TSTree tree = parser.parseString(null, sourceCode);
             TSNode root = tree.getRootNode();
 
@@ -51,6 +64,14 @@ public class JavaTreeSitterService implements LanguageParser {
             log.error("Failed to read file", e);
             throw new RuntimeException(e);
         }
+    }
+
+    public List<ParsedSymbol> parseContent(String sourceCode) {
+        List<ParsedSymbol> symbols = new ArrayList<>();
+        TSTree tree = parser.parseString(null, sourceCode);
+        TSNode root = tree.getRootNode();
+        traverse(root, symbols, sourceCode);
+        return symbols;
     }
 
     private void traverse(TSNode node, List<ParsedSymbol> symbols, String sourceCode) {

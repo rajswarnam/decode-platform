@@ -24,6 +24,17 @@ public class VectorizerService {
     public void vectorizerAllSymbols() {
         log.info("Starting batch vectorization with domain context...");
         List<Symbol> symbols = symbolRepository.findAll();
+        vectorizeSymbols(symbols);
+    }
+    
+    @Transactional
+    public void vectorizeProject(java.util.UUID projectId) {
+        log.info("Vectorizing Project ID: {}", projectId);
+        List<Symbol> symbols = symbolRepository.findAllBySourceFile_Project_Id(projectId);
+        vectorizeSymbols(symbols);
+    }
+
+    private void vectorizeSymbols(List<Symbol> symbols) {
         log.info("Found {} symbols to vectorize", symbols.size());
 
         List<Document> documents = new ArrayList<>();

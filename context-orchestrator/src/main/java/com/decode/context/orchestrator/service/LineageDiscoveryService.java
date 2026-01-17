@@ -137,6 +137,10 @@ public class LineageDiscoveryService {
         }
     }
 
+    public List<DependencyLineage> getLineageForProject(String projectName) {
+        return lineageRepository.findBySourceProject_Name(projectName);
+    }
+
     private String fetchSourceFromMinio(String storageKey) {
         try (InputStream stream = minioClient.getObject(
                 GetObjectArgs.builder()

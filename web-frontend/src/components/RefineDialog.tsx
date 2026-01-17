@@ -4,17 +4,34 @@ import { X, Loader2, RefreshCw, Info } from 'lucide-react';
 
 interface RefineDialogProps {
     blueprintPath: string;
+    project: string;
     onClose: () => void;
-    onRefine: (prompt: string, updateExisting: boolean) => void;
+    onRefineComplete: (result: RefineResult, updateExisting: boolean) => void;
 }
 
-export const RefineDialog = ({ blueprintPath, onClose, onRefine }: RefineDialogProps) => {
+interface RefineResult {
+    status: string;
+    newBlueprintPath?: string;
+    version?: number;
+    codeChanges?: {
+        detected: boolean;
+        newSymbols: number;
+        modifiedSymbols: number;
+        deletedSymbols: number;
+        summary?: string;
+    };
+    message?: string;
+}
+
+export const RefineDialog = ({ blueprintPath, project, onClose, onRefineComplete }: RefineDialogProps) => {
     const [refinementPrompt, setRefinementPrompt] = useState('');
     const [updateExisting, setUpdateExisting] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
     const handleRefine = async () => {
         setLoading(true);
+        setError(null);
         try {
             const response = await fetch('http://localhost:8082/api/v1/explore/refine-blueprint', {
                 method: 'POST',
@@ -22,22 +39,23 @@ export const RefineDialog = ({ blueprintPath, onClose, onRefine }: RefineDialogP
                 body: JSON.stringify({
                     blueprintPath,
                     refinementPrompt,
-                    project: 'piggymetrics',
-                    updateExisting: updateExisting.toString()
+                    project,
+                    updateExisting
                 })
             });
 
-            const result = await response.json();
+            const result: RefineResult = await response.json();
 
             if (result.status === 'success') {
-                onRefine(refinementPrompt, updateExisting);
+                onRefineComplete(result, updateExisting);
                 onClose();
             } else {
                 console.error('Refinement failed:', result.message);
-                // Optionally show error to user
+                setError(result.message || 'Refinement failed. Please try again.');
             }
         } catch (error) {
             console.error('Refinement failed:', error);
+            setError('Refinement failed. Please try again.');
         } finally {
             setLoading(false);
         }
@@ -150,6 +168,12 @@ export const RefineDialog = ({ blueprintPath, onClose, onRefine }: RefineDialogP
                         </div>
                     </label>
                 </div>
+
+                {error && (
+                    <div style={{ marginBottom: '16px', color: '#f87171', fontSize: '12px' }}>
+                        {error}
+                    </div>
+                )}
 
                 <div style={{ display: 'flex', gap: '12px' }}>
                     <button

@@ -7,4 +7,6 @@ import java.util.UUID;
 
 public interface ProjectRepository extends JpaRepository<Project, UUID> {
     Optional<Project> findByName(String name);
+    java.util.List<Project> findByDomain(String domain);
+    java.util.List<Project> findByNameContainingIgnoreCase(String name);
 }

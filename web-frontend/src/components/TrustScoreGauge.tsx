@@ -5,7 +5,7 @@ interface Props {
 }
 
 export const TrustScoreGauge = ({ score }: Props) => {
-    const percentage = Math.round(score * 100);
+    const percentage = score > 1 ? Math.round(score) : Math.round(score * 100);
     const data = [
         { name: 'Trust', value: percentage },
         { name: 'Gap', value: 100 - percentage },

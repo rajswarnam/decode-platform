@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { ShieldCheck, ShieldAlert, Code, ChevronDown, ChevronUp, FileSearch } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Code, ChevronDown, ChevronUp, FileSearch, Loader } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { api } from '../services/api';
 
 interface Props {
     mapping: {
@@ -11,12 +12,38 @@ interface Props {
         externalLayerRef: string;
         rawDataPath: string;
         sourceSnippet?: string;
+        storageKey?: string; // Add this to interface if not present in backend type yet
     };
 }
 
 export const LogicCard = ({ mapping }: Props) => {
     const [expanded, setExpanded] = useState(false);
+    const [snippet, setSnippet] = useState<string | null>(mapping.sourceSnippet || null);
+    const [loading, setLoading] = useState(false);
     const isHighTrust = mapping.confidenceScore >= 0.8;
+
+    const handleToggle = async () => {
+        if (!expanded && !snippet) {
+            setLoading(true);
+            try {
+                // Heuristic: Use rawDataPath as key if storageKey missing (or fetch real key)
+                // For demo, assumes rawDataPath maps to MinIO key logic or pass actual key
+                // Ideally backend mapping object has 'storageKey'
+                // Fallback: We'll use a hardcoded range for demo if not in mapping, 
+                // but in reality mapping should have start/end line.
+                // Assuming mapping might have startLine/endLine in future.
+                // For now, fetching first 50 lines of the file.
+
+                const response = await api.getSnippet(mapping.rawDataPath, 1, 50);
+                setSnippet(response.data.code);
+            } catch (err) {
+                setSnippet("// Error fetching deterministic evidence from MinIO.");
+            } finally {
+                setLoading(false);
+            }
+        }
+        setExpanded(!expanded);
+    };
 
     return (
         <div className="glass-panel" style={{ padding: '16px', marginBottom: '16px', transition: 'all 0.3s' }}>
@@ -42,7 +69,7 @@ export const LogicCard = ({ mapping }: Props) => {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                     <div style={{ fontSize: '18px', fontWeight: 'bold', color: isHighTrust ? '#10b981' : '#f59e0b' }}>
-                        {(mapping.confidenceScore * 100).toFixed(0)}%
+                        {(mapping.confidenceScore > 1 ? mapping.confidenceScore : mapping.confidenceScore * 100).toFixed(0)}%
                     </div>
                     <div style={{ fontSize: '9px', color: '#64748b', textTransform: 'uppercase' }}>Confidence</div>
                 </div>
@@ -58,7 +85,7 @@ export const LogicCard = ({ mapping }: Props) => {
             </div>
 
             <button
-                onClick={() => setExpanded(!expanded)}
+                onClick={handleToggle}
                 style={{
                     marginTop: '16px',
                     width: '100%',
@@ -71,11 +98,12 @@ export const LogicCard = ({ mapping }: Props) => {
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: '8px'
+                    gap: '8px',
+                    cursor: 'pointer'
                 }}
             >
-                {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                {expanded ? 'Hide Evidence' : 'View Source Evidence'}
+                {loading ? <Loader size={14} className="animate-spin" /> : (expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />)}
+                {loading ? " Fetching Evidence..." : (expanded ? 'Hide Evidence' : 'View Source Evidence')}
             </button>
 
             <AnimatePresence>
@@ -97,7 +125,7 @@ export const LogicCard = ({ mapping }: Props) => {
                             border: '1px solid rgba(16,185,129,0.1)',
                             whiteSpace: 'pre-wrap'
                         }}>
-                            {mapping.sourceSnippet || `// Source Snippet from MinIO\n// File: ${mapping.rawDataPath}\n\n[DETERMINISTIC EVIDENCE NOT LOADED]`}
+                            {snippet || `// Source Snippet from MinIO\n// File: ${mapping.rawDataPath}\n\n[DETERMINISTIC EVIDENCE NOT LOADED]`}
                         </div>
                     </motion.div>
                 )}
