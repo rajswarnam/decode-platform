@@ -2,15 +2,19 @@ package com.decode.code.parser.controller;
 
 import com.decode.code.parser.domain.Project;
 import com.decode.code.parser.repository.ProjectRepository;
+import com.decode.code.parser.repository.SymbolRepository;
 import com.decode.code.parser.service.ParserOrchestratorService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -20,6 +24,7 @@ import java.util.UUID;
 public class ParserController {
 
     private final ProjectRepository projectRepository;
+    private final SymbolRepository symbolRepository;
     private final ParserOrchestratorService parserService;
 
     @PostMapping("/trigger")
@@ -48,5 +53,26 @@ public class ParserController {
         }).start();
         
         return ResponseEntity.ok("Parsing triggered for " + project.getName());
+    }
+
+    @GetMapping("/status")
+    public ResponseEntity<Map<String, Object>> getParsingStatus(@RequestParam UUID projectId) {
+        Map<String, Object> status = new HashMap<>();
+        
+        java.util.Optional<Project> projectOpt = projectRepository.findById(projectId);
+        if (projectOpt.isEmpty()) {
+            status.put("error", "Project not found");
+            return ResponseEntity.notFound().build();
+        }
+        
+        Project project = projectOpt.get();
+        long symbolCount = symbolRepository.countBySourceFile_Project_Id(projectId);
+        
+        status.put("projectName", project.getName());
+        status.put("projectId", projectId.toString());
+        status.put("symbolCount", symbolCount);
+        status.put("status", symbolCount > 0 ? "COMPLETED" : "PENDING");
+        
+        return ResponseEntity.ok(status);
     }
 }

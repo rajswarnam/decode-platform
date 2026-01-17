@@ -3,10 +3,13 @@ package com.decode.code.parser.service;
 import com.decode.code.parser.domain.Project;
 import com.decode.code.parser.domain.SourceFile;
 import com.decode.code.parser.domain.Symbol;
+import com.decode.code.parser.domain.SymbolRelationship;
 import com.decode.code.parser.dto.ParsedSymbol;
+import com.decode.code.parser.dto.ParsedRelationship;
 import com.decode.code.parser.repository.ProjectRepository;
 import com.decode.code.parser.repository.SourceFileRepository;
 import com.decode.code.parser.repository.SymbolRepository;
+import com.decode.code.parser.repository.SymbolRelationshipRepository;
 import io.minio.GetObjectArgs;
 import io.minio.ListObjectsArgs;
 import io.minio.MinioClient;
@@ -35,6 +38,7 @@ public class ParserOrchestratorService {
     private final ProjectRepository projectRepository;
     private final SourceFileRepository sourceFileRepository;
     private final SymbolRepository symbolRepository;
+    private final SymbolRelationshipRepository relationshipRepository;
     private final MinioClient minioClient;
     
     // We need a RestTemplate to trigger downstream Vectorizer
@@ -79,21 +83,38 @@ public class ParserOrchestratorService {
                         .recursive(true)
                         .build());
 
+        int totalFiles = 0;
+        int filesProcessed = 0;
+        int filesWithSymbols = 0;
+        int filesIgnored = 0;
+        int filesSkipped = 0;
+
         for (Result<Item> result : results) {
             Item item = result.get();
             String objectKey = item.objectName();
             if (objectKey.endsWith("/")) continue; 
 
-            processMinioObject(project, objectKey);
+            totalFiles++;
+            
+            if (shouldIgnore(objectKey)) {
+                filesIgnored++;
+                continue;
+            }
+
+            boolean hadSymbols = processMinioObject(project, objectKey);
+            if (hadSymbols) {
+                filesProcessed++;
+                filesWithSymbols++;
+            } else {
+                filesSkipped++;
+            }
         }
+
+        log.info("✅ Parsing completed for project: {} | Total files: {} | Processed: {} ({} with symbols) | Ignored: {} | Skipped: {}", 
+                project.getName(), totalFiles, filesProcessed, filesWithSymbols, filesIgnored, filesSkipped);
     }
 
-    private void processMinioObject(Project project, String objectKey) {
-        if (shouldIgnore(objectKey)) {
-            // log.debug("Skipping ignored/generated file: {}", objectKey);
-            return;
-        }
-
+    private boolean processMinioObject(Project project, String objectKey) {
         File tempFile = null;
         try {
             try (InputStream stream = minioClient.getObject(
@@ -109,24 +130,36 @@ public class ParserOrchestratorService {
 
             if (isBinaryFile(tempFile)) {
                 Files.deleteIfExists(tempFile.toPath());
-                return;
+                return false;
             }
 
             for (LanguageParser parser : parsers) {
                 if (parser.supports(tempFile)) {
                     List<ParsedSymbol> symbols = parser.parseFile(tempFile);
-                    saveResults(project, objectKey, tempFile.getName(), symbols);
-                    return;
+                    List<ParsedRelationship> relationships = parser.extractRelationships(tempFile, symbols);
+                    saveResults(project, objectKey, tempFile.getName(), symbols, relationships);
+                    return !symbols.isEmpty();
                 }
             }
+            
+            // No parser matched - log for debugging
+            String extension = "";
+            int dotIndex = objectKey.lastIndexOf('.');
+            if (dotIndex > 0 && dotIndex < objectKey.length() - 1) {
+                extension = objectKey.substring(dotIndex);
+            }
+            log.debug("No parser found for file: {} (extension: {})", objectKey, extension.isEmpty() ? "none" : extension);
+            return false;
         } catch (Exception e) {
             log.error("Failed to process object: {}", objectKey, e);
+            return false;
         } finally {
             if (tempFile != null && tempFile.exists()) tempFile.delete();
         }
     }
 
-    private void saveResults(Project project, String storageKey, String fileName, List<ParsedSymbol> symbols) {
+    private void saveResults(Project project, String storageKey, String fileName, 
+                            List<ParsedSymbol> symbols, List<ParsedRelationship> relationships) {
         SourceFile sourceFile = sourceFileRepository.findByProjectAndFilePath(project, storageKey)
                 .orElse(new SourceFile());
 
@@ -137,6 +170,8 @@ public class ParserOrchestratorService {
         sourceFile.setExtension(fileName.contains(".") ? fileName.substring(fileName.lastIndexOf('.')) : "");
         sourceFile = sourceFileRepository.save(sourceFile);
 
+        // Save symbols and build a map for relationship resolution
+        java.util.Map<String, Symbol> symbolMap = new java.util.HashMap<>();
         int added = 0;
         for (ParsedSymbol dto : symbols) {
             // Check if symbol exists to avoid duplicates? Ideally yes.
@@ -148,10 +183,62 @@ public class ParserOrchestratorService {
             symbol.setDataType(dto.getType());
             symbol.setStartLine(dto.getStartLine());
             symbol.setEndLine(dto.getEndLine());
-            symbolRepository.save(symbol);
+            symbol = symbolRepository.save(symbol);
+            
+            // Index by name for relationship lookup (simple approach - may need to handle duplicates better)
+            if (!symbolMap.containsKey(dto.getName())) {
+                symbolMap.put(dto.getName(), symbol);
+            }
             added++;
         }
         if (added > 0) log.info("Saved {} symbols for {}", added, storageKey);
+        
+        // Save relationships
+        int relAdded = 0;
+        for (ParsedRelationship relDto : relationships) {
+            Symbol sourceSymbol = symbolMap.get(relDto.getSourceSymbolName());
+            Symbol targetSymbol = symbolMap.get(relDto.getTargetSymbolName());
+            
+            // Also check if symbols exist in database (for cross-file relationships)
+            if (sourceSymbol == null) {
+                sourceSymbol = symbolRepository.findByName(relDto.getSourceSymbolName()).orElse(null);
+                if (sourceSymbol != null && !sourceSymbol.getSourceFile().getProject().getId().equals(project.getId())) {
+                    sourceSymbol = null; // Don't create relationships across projects
+                }
+            }
+            if (targetSymbol == null) {
+                targetSymbol = symbolRepository.findByName(relDto.getTargetSymbolName()).orElse(null);
+                if (targetSymbol != null && !targetSymbol.getSourceFile().getProject().getId().equals(project.getId())) {
+                    targetSymbol = null; // Don't create relationships across projects
+                }
+            }
+            
+            // Only save if both symbols exist
+            if (sourceSymbol != null && targetSymbol != null) {
+                // Create final copies for lambda expression
+                final Symbol finalSourceSymbol = sourceSymbol;
+                final Symbol finalTargetSymbol = targetSymbol;
+                final String finalRelationshipType = relDto.getRelationshipType();
+                
+                // Check if relationship already exists to avoid duplicates
+                boolean exists = relationshipRepository.findBySourceSymbol(finalSourceSymbol).stream()
+                        .anyMatch(r -> r.getTargetSymbol().getId().equals(finalTargetSymbol.getId()) 
+                                && r.getRelationshipType().equals(finalRelationshipType));
+                
+                if (!exists) {
+                    SymbolRelationship relationship = new SymbolRelationship();
+                    relationship.setSourceSymbol(sourceSymbol);
+                    relationship.setTargetSymbol(targetSymbol);
+                    relationship.setRelationshipType(relDto.getRelationshipType());
+                    relationship.setSourceLine(relDto.getSourceLine());
+                    relationship.setSourceColumn(relDto.getSourceColumn());
+                    relationship.setContext(relDto.getContext());
+                    relationshipRepository.save(relationship);
+                    relAdded++;
+                }
+            }
+        }
+        if (relAdded > 0) log.info("Saved {} relationships for {}", relAdded, storageKey);
     }
 
     private boolean isBinaryFile(File file) {
@@ -161,17 +248,50 @@ public class ParserOrchestratorService {
 
     private boolean shouldIgnore(String key) {
         String k = key.toLowerCase();
-        return k.contains("/generated/") || 
-               k.contains("java-xjc") || 
-               k.contains("java-gen") || 
-               k.contains("/test/") ||
-               k.contains("/target/") || 
-               k.contains("/build/") || 
-               k.contains("/node_modules/") ||
-               k.contains(".mvn") ||
-               k.contains("/.git/") ||  // Exclude .git directory files
-               k.startsWith(".git/") ||  // Exclude .git files at root
-               k.endsWith(".min.js") ||
-               k.endsWith(".map");
+        
+        // Directories to ignore
+        if (k.contains("/generated/") || 
+            k.contains("java-xjc") || 
+            k.contains("java-gen") || 
+            k.contains("/test/") ||
+            k.contains("/target/") || 
+            k.contains("/build/") || 
+            k.contains("/node_modules/") ||
+            k.contains(".mvn") ||
+            k.contains("/.git/") ||  // Exclude .git directory files
+            k.startsWith(".git/") ||  // Exclude .git files at root
+            k.contains("/.swagger-codegen/") ||
+            k.contains("/.tx/")) {
+            return true;
+        }
+        
+        // File patterns to ignore
+        if (k.endsWith(".min.js") ||
+            k.endsWith(".map") ||
+            k.endsWith("/dockerfile") ||
+            k.endsWith("/version") ||
+            k.endsWith("/readme") ||
+            k.endsWith("/readme.md") ||
+            k.endsWith("/.gitignore") ||
+            k.endsWith("/.gitattributes") ||
+            k.endsWith("/.gitkeep") ||
+            k.endsWith("/makefile") ||
+            k.endsWith("/makefile.am") ||
+            k.endsWith("/makefile.in") ||
+            k.contains("/.idea/") ||
+            k.contains("/.vscode/") ||
+            k.contains("/.eclipse/")) {
+            return true;
+        }
+        
+        // Extensionless files that aren't parsable (unless explicitly handled)
+        String fileName = key.substring(key.lastIndexOf('/') + 1);
+        if (fileName.contains(".") == false && !fileName.isEmpty()) {
+            // Allow only known extensionless files that might be parsed
+            // Most extensionless files (like VERSION, README, Dockerfile, etc.) are already filtered above
+            return true;
+        }
+        
+        return false;
     }
 }

@@ -75,25 +75,115 @@ public class JavaTreeSitterService implements LanguageParser {
     }
 
     private void traverse(TSNode node, List<ParsedSymbol> symbols, String sourceCode) {
-        if ("class_declaration".equals(node.getType())) {
-            ParsedSymbol symbol = new ParsedSymbol();
-            symbol.setCategory("class");
-            symbol.setStartLine(node.getStartPoint().getRow());
-            symbol.setEndLine(node.getEndPoint().getRow());
-
-            // Find name
-            TSNode nameNode = node.getChildByFieldName("name");
-            if (nameNode != null) {
-                symbol.setName(extractText(nameNode, sourceCode));
-            } else {
-                symbol.setName("Anonymous");
+        String nodeType = node.getType();
+        
+        // Extract classes
+        if ("class_declaration".equals(nodeType)) {
+            ParsedSymbol symbol = createSymbol(node, sourceCode, "class");
+            if (symbol != null) symbols.add(symbol);
+        }
+        // Extract interfaces
+        else if ("interface_declaration".equals(nodeType)) {
+            ParsedSymbol symbol = createSymbol(node, sourceCode, "interface");
+            if (symbol != null) symbols.add(symbol);
+        }
+        // Extract enums
+        else if ("enum_declaration".equals(nodeType)) {
+            ParsedSymbol symbol = createSymbol(node, sourceCode, "enum");
+            if (symbol != null) symbols.add(symbol);
+        }
+        // Extract methods
+        else if ("method_declaration".equals(nodeType) || "constructor_declaration".equals(nodeType)) {
+            ParsedSymbol symbol = createSymbol(node, sourceCode, 
+                "constructor_declaration".equals(nodeType) ? "constructor" : "method");
+            if (symbol != null) symbols.add(symbol);
+        }
+        // Extract fields
+        else if ("field_declaration".equals(nodeType)) {
+            // A field_declaration can contain multiple variable declarators
+            // Extract each variable as a separate symbol
+            for (int i = 0; i < node.getChildCount(); i++) {
+                TSNode child = node.getChild(i);
+                if ("variable_declarator".equals(child.getType())) {
+                    TSNode nameNode = child.getChildByFieldName("name");
+                    if (nameNode != null) {
+                        ParsedSymbol symbol = new ParsedSymbol();
+                        symbol.setCategory("field");
+                        symbol.setStartLine(node.getStartPoint().getRow());
+                        symbol.setEndLine(node.getEndPoint().getRow());
+                        symbol.setName(extractText(nameNode, sourceCode));
+                        
+                        // Try to extract type from parent field_declaration
+                        TSNode typeNode = node.getChildByFieldName("type");
+                        if (typeNode == null) {
+                            // Try finding type_identifier in the first few children
+                            for (int j = 0; j < node.getChildCount() && j < 5; j++) {
+                                TSNode candidate = node.getChild(j);
+                                if ("type_identifier".equals(candidate.getType()) || 
+                                    "generic_type".equals(candidate.getType()) ||
+                                    "array_type".equals(candidate.getType())) {
+                                    typeNode = candidate;
+                                    break;
+                                }
+                            }
+                        }
+                        if (typeNode != null) {
+                            symbol.setType(extractText(typeNode, sourceCode));
+                        }
+                        symbols.add(symbol);
+                    }
+                }
             }
-            symbols.add(symbol);
         }
 
+        // Continue traversal for all children
         for (int i = 0; i < node.getChildCount(); i++) {
             traverse(node.getChild(i), symbols, sourceCode);
         }
+    }
+
+    private ParsedSymbol createSymbol(TSNode node, String sourceCode, String category) {
+        ParsedSymbol symbol = new ParsedSymbol();
+        symbol.setCategory(category);
+        symbol.setStartLine(node.getStartPoint().getRow());
+        symbol.setEndLine(node.getEndPoint().getRow());
+
+        // Find name
+        TSNode nameNode = node.getChildByFieldName("name");
+        if (nameNode != null) {
+            symbol.setName(extractText(nameNode, sourceCode));
+        } else {
+            // Fallback: look for identifier in children
+            for (int i = 0; i < node.getChildCount() && i < 10; i++) {
+                TSNode child = node.getChild(i);
+                if ("identifier".equals(child.getType()) || 
+                    "type_identifier".equals(child.getType())) {
+                    symbol.setName(extractText(child, sourceCode));
+                    break;
+                }
+            }
+            if (symbol.getName() == null || symbol.getName().isEmpty()) {
+                symbol.setName("Anonymous");
+            }
+        }
+
+        // Try to extract type for methods (return type)
+        if ("method".equals(category) || "constructor".equals(category)) {
+            TSNode typeNode = node.getChildByFieldName("type");
+            if (typeNode == null) {
+                // For constructors, type is the class name
+                if ("constructor".equals(category)) {
+                    // Constructor name is typically the first identifier
+                    if (nameNode != null) {
+                        symbol.setType(extractText(nameNode, sourceCode));
+                    }
+                }
+            } else {
+                symbol.setType(extractText(typeNode, sourceCode));
+            }
+        }
+
+        return symbol;
     }
 
     private String extractText(TSNode node, String source) {
