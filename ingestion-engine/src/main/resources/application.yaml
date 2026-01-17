@@ -4,9 +4,9 @@ spring:
   application:
     name: ingestion-engine
   datasource:
-    url: jdbc:postgresql://host.docker.internal:5432/decode
-    username: kothuparotta
-    password: "" 
+    url: jdbc:postgresql://postgres:5432/decode
+    username: ${SPRING_DATASOURCE_USERNAME:decode_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:decode_password} 
   jpa:
     hibernate:
       ddl-auto: update

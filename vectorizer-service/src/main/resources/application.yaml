@@ -2,9 +2,9 @@ spring:
   application:
     name: vectorizer-service
   datasource:
-    url: jdbc:postgresql://host.docker.internal:5432/decode
-    username: kothuparotta
-    password: 
+    url: jdbc:postgresql://postgres:5432/decode
+    username: ${SPRING_DATASOURCE_USERNAME:decode_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:decode_password} 
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -15,7 +15,7 @@ spring:
   ai:
     vectorstore:
       qdrant:
-        host: host.docker.internal
+        host: qdrant
         port: 6334
         collection-name: symbols
         initialize-schema: true

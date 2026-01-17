@@ -44,6 +44,7 @@ infra/minio/data/
 infra/qdrant/storage/
 infra/qdrant_storage/
 infra/postgres/data/
+infra/postgres_data/
 
 # Application Specific
 blueprints/

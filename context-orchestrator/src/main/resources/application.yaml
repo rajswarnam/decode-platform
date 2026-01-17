@@ -2,9 +2,9 @@ spring:
   application:
     name: context-orchestrator
   datasource:
-    url: jdbc:postgresql://host.docker.internal:5432/decode
-    username: kothuparotta
-    password: 
+    url: jdbc:postgresql://postgres:5432/decode
+    username: ${SPRING_DATASOURCE_USERNAME:decode_user}
+    password: ${SPRING_DATASOURCE_PASSWORD:decode_password} 
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -21,7 +21,7 @@ spring:
           model: gpt-4o
     vectorstore:
       qdrant:
-        host: host.docker.internal
+        host: qdrant
         port: 6334
         collection-name: symbols
         initialize-schema: false

@@ -1,5 +1,23 @@
 version: '3.8'
 services:
+  postgres:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: decode
+      POSTGRES_USER: decode_user
+      POSTGRES_PASSWORD: decode_password
+    volumes:
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./infra/postgres_data:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U decode_user -d decode"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   qdrant:
     image: qdrant/qdrant:latest
     ports:
@@ -27,28 +45,49 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]
     ports:
       - "8083:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
     environment:
       - SCAN_ROOT=/workspace
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:5432/decode
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/decode
+      - SPRING_DATASOURCE_USERNAME=decode_user
+      - SPRING_DATASOURCE_PASSWORD=decode_password
     volumes:
       - ./:/workspace
 
   code-parser:
     build: ./code-parser
     extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
     environment:
       - SCAN_ROOT=/workspace
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:5432/decode
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/decode
+      - SPRING_DATASOURCE_USERNAME=decode_user
+      - SPRING_DATASOURCE_PASSWORD=decode_password
     volumes:
       - ./:/workspace
 
   vectorizer-service:
     build: ./vectorizer-service
     extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     environment:
       - SCAN_ROOT=/workspace
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:5432/decode
-      - QDRANT_HOST=host.docker.internal
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/decode
+      - SPRING_DATASOURCE_USERNAME=decode_user
+      - SPRING_DATASOURCE_PASSWORD=decode_password
+      - QDRANT_HOST=qdrant
       - JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true
     volumes:
       - ./infra/models:/models
@@ -68,9 +107,16 @@ services:
     ports:
       - "8082:8080"
     depends_on:
-      - llm-gateway-service
+      postgres:
+        condition: service_healthy
+      llm-gateway-service:
+        condition: service_started
+      qdrant:
+        condition: service_started
     environment:
       - SCAN_ROOT=/workspace
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:5432/decode
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/decode
+      - SPRING_DATASOURCE_USERNAME=decode_user
+      - SPRING_DATASOURCE_PASSWORD=decode_password
     volumes:
       - ./infra/models:/models
