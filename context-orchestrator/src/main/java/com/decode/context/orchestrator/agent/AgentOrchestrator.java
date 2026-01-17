@@ -114,10 +114,12 @@ public class AgentOrchestrator {
         // Send sessionId to frontend via progress
         progressConsumer.accept("SESSION_ID:" + sessionId);
         
-        // DEEP DISCOVERY MODE: 4-Pass Iteration
-        // DEEP DISCOVERY MODE: 4-Pass Iteration
+        // DEEP DISCOVERY MODE: Dynamic iterations based on coverage
+        // Start with 4 iterations, but expand if coverage is critically low
         int maxIterations = 4; // Initial → QA → Deep Dive → Cross-Validation
+        int maxAllowedIterations = 8; // Hard cap to prevent infinite loops
         String qaReport = "";
+        boolean hasCriticalLowCoverage = false;
         
         for (int iteration = 1; iteration <= maxIterations; iteration++) {
             final int currentIter = iteration;
@@ -128,7 +130,7 @@ public class AgentOrchestrator {
                 case 2 -> "Targeted Deep Dive";
                 case 3 -> "Cross-Validation";
                 case 4 -> "Final Evidence Synthesis";
-                default -> "Analysis Pass " + iteration;
+                default -> "Extended Analysis Pass " + iteration;
             };
             
             progressConsumer.accept("🔬 Iteration " + iteration + "/" + maxIterations + ": " + iterationMode);
@@ -153,11 +155,18 @@ public class AgentOrchestrator {
             
             // DECISION POINT
             if (iteration < maxIterations) {
-                boolean needsRefinement = refineTasksBasedOnQA(plan, qaReport, iteration, executionPlan, progressConsumer);
+                boolean needsRefinement = refineTasksBasedOnQA(plan, qaReport, iteration, executionPlan, progressConsumer, () -> hasCriticalLowCoverage = true);
                 
                 // SPECIALIST SPAWNING: If critical gaps found, add new workers
                 if (iteration == 2 && qaReport.contains("❌")) {
                     spawnSpecialistWorkers(plan, qaReport, progressConsumer);
+                }
+                
+                // DYNAMIC ITERATION EXPANSION: If coverage is critically low, extend iterations
+                if (hasCriticalLowCoverage && maxIterations < maxAllowedIterations) {
+                    maxIterations = Math.min(maxIterations + 2, maxAllowedIterations); // Add 2 more iterations
+                    log.warn("⚠️ CRITICAL: Low coverage detected. Extending iterations from {} to {}", iteration + 1, maxIterations);
+                    progressConsumer.accept("⚠️ Architect: Low coverage detected. Extending analysis to " + maxIterations + " iterations...");
                 }
                 
                 if (!needsRefinement && plan.stream().noneMatch(t -> t.getStatus().equals("REFINING"))) {
@@ -292,7 +301,7 @@ public class AgentOrchestrator {
         }
     }
     
-    private boolean refineTasksBasedOnQA(List<WorkerTask> tasks, String qaReport, int iteration, CurrentExecutionPlan executionPlan, Consumer<String> progressConsumer) {
+    private boolean refineTasksBasedOnQA(List<WorkerTask> tasks, String qaReport, int iteration, CurrentExecutionPlan executionPlan, Consumer<String> progressConsumer, Runnable onCriticalCoverage) {
         progressConsumer.accept("🔄 Architect: Reviewing QA Critique for Refinement...");
         
         // SMART SKIP: If ALL workers found 0 files, don't refine - there's no code to analyze
@@ -445,6 +454,9 @@ public class AgentOrchestrator {
                         String.format("%.1f", actualRepoCoveragePercent), filesAnalyzed, totalFilesInRepo);
                     coverageIssue = true;
                     needsRefinement = true;
+                    if (onCriticalCoverage != null) {
+                        onCriticalCoverage.run(); // Notify that critical coverage was detected
+                    }
                     progressConsumer.accept("🚨 Architect: CRITICAL - Only " + String.format("%.1f", actualRepoCoveragePercent) + 
                         "% of repository analyzed (" + filesAnalyzed + "/" + totalFilesInRepo + " files). Aggressively expanding analysis...");
                 } else if (actualRepoCoveragePercent < 10.0) {
@@ -560,6 +572,34 @@ public class AgentOrchestrator {
             }
             
             queryIntent.setRecommendedTopK(expandedTopK);
+            
+            // CRITICAL: When TopK is expanded significantly (50%+ increase) due to low coverage,
+            // force all workers to re-execute so they can access the expanded document pool.
+            // This ensures we actually analyze more files when coverage is critically low.
+            double expansionRatio = (double) expandedTopK / currentTopK;
+            if (expandedTopK > currentTopK && expansionRatio >= 1.5 && actualRepoCoveragePercent < 10.0) {
+                log.warn("🔄 FORCING RE-EXECUTION: TopK expanded by {:.1f}x ({} → {}) due to low coverage ({}%). All workers will re-execute with expanded pool.", 
+                    String.format("%.1f", expansionRatio), currentTopK, expandedTopK, String.format("%.1f", actualRepoCoveragePercent));
+                progressConsumer.accept("🔄 Architect: TopK expanded " + String.format("%.1f", expansionRatio) + "x. Re-executing all workers with expanded document pool (" + expandedTopK + " files)...");
+                
+                // Mark all workers that haven't been marked as satisfied as REFINING
+                // This ensures they re-execute in the next iteration with the expanded TopK
+                // We preserve their existing questions - they'll just get access to more documents
+                int workersMarkedForReexecution = 0;
+                for (WorkerTask task : tasks) {
+                    if (task.getStatus() == null || !task.getStatus().equals("COMPLETED_SATISFIED")) {
+                        // Don't change the question, just mark as REFINING to force re-execution
+                        // The worker will use the updated TopK from queryIntent when it executes
+                        if (!task.getStatus().equals("REFINING")) {
+                            task.setStatus("REFINING");
+                            workersMarkedForReexecution++;
+                            log.debug("Marked worker {} for re-execution with expanded TopK (preserving question: {})", 
+                                task.getPersona().name(), task.getSpecificQuestion());
+                        }
+                    }
+                }
+                log.info("Marked {} workers for re-execution with expanded TopK", workersMarkedForReexecution);
+            }
         }
         
         // Refine individual workers based on QA critique (existing logic)
