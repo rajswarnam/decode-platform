@@ -39,8 +39,10 @@ venv/
 .docker/
 
 # MinIO / Data
+infra/minio_data/
 infra/minio/data/
 infra/qdrant/storage/
+infra/qdrant_storage/
 infra/postgres/data/
 
 # Application Specific
