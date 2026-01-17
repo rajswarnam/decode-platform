@@ -364,7 +364,7 @@ public class AgentOrchestrator {
         // Extract ACTUAL repository coverage percentage from QA report
         // Format: "Actual Coverage: %.1f%% of repository analyzed (%d/%d files)"
         // Pattern should match: "Actual Coverage: 5.0% of repository" or "5.0%% of repository"
-        java.util.regex.Pattern actualRepoPattern = java.util.regex.Pattern.compile("(?i)(?:actual coverage|coverage assessment).*?(\\d+(?:\\.\\d+)?)\\s*%+\\s*(?:of repository|repository|analyzed)", Pattern.DOTALL);
+        java.util.regex.Pattern actualRepoPattern = java.util.regex.Pattern.compile("(?i)(?:actual coverage|coverage assessment).*?(\\d+(?:\\.\\d+)?)\\s*%+\\s*(?:of repository|repository|analyzed)", java.util.regex.Pattern.DOTALL);
         java.util.regex.Matcher actualRepoMatcher = actualRepoPattern.matcher(qaReport);
         if (actualRepoMatcher.find()) {
             actualRepoCoveragePercent = Double.parseDouble(actualRepoMatcher.group(1));
