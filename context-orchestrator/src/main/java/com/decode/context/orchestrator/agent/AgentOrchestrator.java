@@ -333,6 +333,8 @@ public class AgentOrchestrator {
         int totalModules = 0;
         double fileCoveragePercent = 0.0;
         double moduleCoveragePercent = 0.0;
+        double actualRepoCoveragePercent = 0.0;
+        long totalFilesInRepo = 0;
         
         // Extract module coverage from QA report
         java.util.regex.Pattern modulePattern = java.util.regex.Pattern.compile("(?i)(\\d+)\\s*(?:out of|/)\\s*(\\d+)\\s*(?:modules|module)");
@@ -345,7 +347,7 @@ public class AgentOrchestrator {
             }
         }
         
-        // Extract file count coverage
+        // Extract file count coverage vs recommended
         java.util.regex.Pattern filePattern = java.util.regex.Pattern.compile("(?i)(\\d+)\\s*(?:files?|file)\\s*(?:analyzed|with evidence)\\s*(?:vs|out of|/)\\s*(\\d+)");
         java.util.regex.Matcher fileMatcher = filePattern.matcher(qaReport);
         if (fileMatcher.find()) {
@@ -358,6 +360,45 @@ public class AgentOrchestrator {
             // Fallback: Use extracted file count vs recommended
             fileCoveragePercent = (double) filesAnalyzed / recommendedFiles * 100;
         }
+        
+        // Extract ACTUAL repository coverage percentage from QA report
+        // Format: "Actual Coverage: %.1f%% of repository analyzed (%d/%d files)"
+        // Pattern should match: "Actual Coverage: 5.0% of repository" or "5.0%% of repository"
+        java.util.regex.Pattern actualRepoPattern = java.util.regex.Pattern.compile("(?i)(?:actual coverage|coverage assessment).*?(\\d+(?:\\.\\d+)?)\\s*%+\\s*(?:of repository|repository|analyzed)", Pattern.DOTALL);
+        java.util.regex.Matcher actualRepoMatcher = actualRepoPattern.matcher(qaReport);
+        if (actualRepoMatcher.find()) {
+            actualRepoCoveragePercent = Double.parseDouble(actualRepoMatcher.group(1));
+            log.debug("Parsed actual repository coverage: {}%", actualRepoCoveragePercent);
+        }
+        
+        // Also extract from format: "X.X%% of repository analyzed (Y/Total files)"
+        if (actualRepoCoveragePercent == 0) {
+            java.util.regex.Pattern altPattern = java.util.regex.Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*%+\\s*of\\s+repository\\s+analyzed\\s*\\(\\d+/(\\d+)\\s*files\\)");
+            java.util.regex.Matcher altMatcher = altPattern.matcher(qaReport);
+            if (altMatcher.find()) {
+                actualRepoCoveragePercent = Double.parseDouble(altMatcher.group(1));
+                totalFilesInRepo = Long.parseLong(altMatcher.group(2));
+                log.debug("Parsed actual repository coverage from alt format: {}% ({} total files)", actualRepoCoveragePercent, totalFilesInRepo);
+            }
+        }
+        
+        // Also extract total repository size if available
+        // Format: "Repository Size: 1000 total files in project"
+        java.util.regex.Pattern repoSizePattern = java.util.regex.Pattern.compile("(?i)(?:repository size|total files).*?:\\s*(\\d+)\\s*(?:total files|files in project|files)");
+        java.util.regex.Matcher repoSizeMatcher = repoSizePattern.matcher(qaReport);
+        if (repoSizeMatcher.find()) {
+            totalFilesInRepo = Long.parseLong(repoSizeMatcher.group(1));
+            log.debug("Parsed total repository size: {} files", totalFilesInRepo);
+        } else {
+            // Fallback: Calculate from actual coverage percent if we have it
+            if (actualRepoCoveragePercent > 0 && filesAnalyzed > 0) {
+                totalFilesInRepo = (long) (filesAnalyzed / (actualRepoCoveragePercent / 100.0));
+                log.debug("Calculated total repository size from coverage: {} files ({} files / {}%)", totalFilesInRepo, filesAnalyzed, actualRepoCoveragePercent);
+            }
+        }
+        
+        log.info("Coverage metrics parsed - File vs Recommended: {:.1f}%, Actual Repository: {:.1f}%, Total Repo Files: {}", 
+            String.format("%.1f", fileCoveragePercent), String.format("%.1f", actualRepoCoveragePercent), totalFilesInRepo);
         
         // THRESHOLD CHECKS for COMPREHENSIVE and HYBRID queries
         boolean isComprehensiveOrHybrid = isComprehensive || (queryIntent != null && queryIntent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.HYBRID);
@@ -395,6 +436,32 @@ public class AgentOrchestrator {
                 coverageIssue = true;
                 needsRefinement = true;
             }
+            
+            // CRITICAL: Check ACTUAL repository coverage percentage (<5% is critical, <10% is warning)
+            // This is independent of recommended file count - ensures we analyze a meaningful % of the actual codebase
+            if (actualRepoCoveragePercent > 0) {
+                if (actualRepoCoveragePercent < 5.0) {
+                    log.warn("⚠️ CRITICAL: Actual repository coverage extremely low: {}% ({} files / {} total)", 
+                        String.format("%.1f", actualRepoCoveragePercent), filesAnalyzed, totalFilesInRepo);
+                    coverageIssue = true;
+                    needsRefinement = true;
+                    progressConsumer.accept("🚨 Architect: CRITICAL - Only " + String.format("%.1f", actualRepoCoveragePercent) + 
+                        "% of repository analyzed (" + filesAnalyzed + "/" + totalFilesInRepo + " files). Aggressively expanding analysis...");
+                } else if (actualRepoCoveragePercent < 10.0) {
+                    log.warn("⚠️ Actual repository coverage low: {}% ({} files / {} total)", 
+                        String.format("%.1f", actualRepoCoveragePercent), filesAnalyzed, totalFilesInRepo);
+                    coverageIssue = true;
+                    needsRefinement = true;
+                    progressConsumer.accept("⚠️ Architect: Low repository coverage: " + String.format("%.1f", actualRepoCoveragePercent) + 
+                        "% (" + filesAnalyzed + "/" + totalFilesInRepo + " files). Expanding analysis...");
+                } else if (actualRepoCoveragePercent < 20.0) {
+                    log.info("Actual repository coverage moderate: {}% ({} files / {} total)", 
+                        String.format("%.1f", actualRepoCoveragePercent), filesAnalyzed, totalFilesInRepo);
+                    // Moderate coverage - still expand but less aggressively
+                    coverageIssue = true;
+                    needsRefinement = true;
+                }
+            }
         }
         
         // Check for technical issues (emojis in QA report)
@@ -417,12 +484,82 @@ public class AgentOrchestrator {
         // REFINEMENT: For coverage issues, update query intent to expand search
         // For technical issues, refine specific workers
         if (coverageIssue && isComprehensiveOrHybrid && queryIntent != null) {
-            // Increase search breadth for next iteration
             int currentTopK = queryIntent.getRecommendedTopK();
-            int expandedTopK = Math.max((int) (currentTopK * 1.5), (int) (recommendedFiles * 0.8)); // Increase by 50% or target 80% of recommended
+            int expandedTopK;
+            
+            // SMART EXPANSION: Adjust targets based on repository size
+            // For very large repos (100k+ files), use percentage-based caps
+            // For medium repos (10k-100k), use moderate percentage targets
+            // For small repos (<10k), use aggressive percentage targets
+            
+            if (actualRepoCoveragePercent > 0 && actualRepoCoveragePercent < 5.0 && totalFilesInRepo > 0) {
+                // Determine expansion target based on repository size
+                int targetRepoCoverage;
+                int maxCap;
+                
+                if (totalFilesInRepo >= 100000) {
+                    // VERY LARGE REPOS (>100k files): Cap at 1000 files, target 0.5% minimum
+                    // For 232k files: 0.5% = 1160 files, but cap at 1000
+                    maxCap = 1000;
+                    targetRepoCoverage = Math.min((int) (totalFilesInRepo * 0.005), maxCap); // 0.5% or 1000, whichever is smaller
+                    log.warn("🚨 LARGE REPO DETECTED ({} files): Using conservative expansion to {} files (0.5% target, capped at {})", 
+                        totalFilesInRepo, targetRepoCoverage, maxCap);
+                    progressConsumer.accept("🚨 Architect: Large repository detected (" + totalFilesInRepo + " files). Expanding to " + targetRepoCoverage + " files (0.5% target)...");
+                } else if (totalFilesInRepo >= 50000) {
+                    // LARGE REPOS (50k-100k files): Cap at 800 files, target 1% minimum
+                    maxCap = 800;
+                    targetRepoCoverage = Math.min((int) (totalFilesInRepo * 0.01), maxCap); // 1% or 800, whichever is smaller
+                    log.warn("⚠️ LARGE REPO DETECTED ({} files): Expanding to {} files (1% target, capped at {})", 
+                        totalFilesInRepo, targetRepoCoverage, maxCap);
+                    progressConsumer.accept("⚠️ Architect: Large repository (" + totalFilesInRepo + " files). Expanding to " + targetRepoCoverage + " files (1% target)...");
+                } else if (totalFilesInRepo >= 10000) {
+                    // MEDIUM REPOS (10k-50k files): Cap at 500 files, target 2% minimum
+                    maxCap = 500;
+                    targetRepoCoverage = Math.min((int) (totalFilesInRepo * 0.02), maxCap); // 2% or 500, whichever is smaller
+                    log.warn("⚠️ MEDIUM REPO DETECTED ({} files): Expanding to {} files (2% target, capped at {})", 
+                        totalFilesInRepo, targetRepoCoverage, maxCap);
+                    progressConsumer.accept("⚠️ Architect: Medium repository (" + totalFilesInRepo + " files). Expanding to " + targetRepoCoverage + " files (2% target)...");
+                } else {
+                    // SMALL REPOS (<10k files): Target 10% or 200 minimum (original logic)
+                    targetRepoCoverage = (int) Math.max(totalFilesInRepo * 0.10, 200);
+                    log.warn("🚨 AGGRESSIVE EXPANSION: Small repo ({} files), actual coverage {}% is critical. Expanding to {} files (10% target)", 
+                        totalFilesInRepo, String.format("%.1f", actualRepoCoveragePercent), targetRepoCoverage);
+                    progressConsumer.accept("🚨 Architect: CRITICAL repository coverage detected. Aggressively expanding to " + targetRepoCoverage + " files (targeting 10% of repository)...");
+                }
+                
+                // Also ensure we're targeting at least 2x current files analyzed
+                expandedTopK = Math.max(targetRepoCoverage, filesAnalyzed * 2);
+                // Final cap: never exceed 1000 files regardless of repo size (performance limit)
+                expandedTopK = Math.min(expandedTopK, 1000);
+            } 
+            // MODERATE EXPANSION for low actual repository coverage (5-10%)
+            else if (actualRepoCoveragePercent > 0 && actualRepoCoveragePercent < 10.0 && totalFilesInRepo > 0) {
+                int targetRepoCoverage;
+                if (totalFilesInRepo >= 100000) {
+                    targetRepoCoverage = Math.min((int) (totalFilesInRepo * 0.008), 800); // 0.8% for very large repos
+                } else if (totalFilesInRepo >= 50000) {
+                    targetRepoCoverage = Math.min((int) (totalFilesInRepo * 0.015), 600); // 1.5% for large repos
+                } else if (totalFilesInRepo >= 10000) {
+                    targetRepoCoverage = Math.min((int) (totalFilesInRepo * 0.025), 400); // 2.5% for medium repos
+                } else {
+                    targetRepoCoverage = (int) (totalFilesInRepo * 0.15); // 15% for small repos
+                }
+                expandedTopK = Math.max(targetRepoCoverage, (int) (currentTopK * 1.5));
+                expandedTopK = Math.min(expandedTopK, 1000); // Cap at 1000
+                log.warn("⚠️ MODERATE EXPANSION: Actual repo coverage {}% is low ({} files). Expanding to target {} files", 
+                    String.format("%.1f", actualRepoCoveragePercent), totalFilesInRepo, expandedTopK);
+                progressConsumer.accept("⚠️ Architect: Low repository coverage. Expanding to " + expandedTopK + " files...");
+            }
+            // STANDARD EXPANSION for coverage vs recommended
+            else {
+                // Increase by 50% or target 80% of recommended
+                expandedTopK = Math.max((int) (currentTopK * 1.5), (int) (recommendedFiles * 0.8));
+                expandedTopK = Math.min(expandedTopK, 1000); // Cap at 1000
+                log.info("Standard expansion: Expanding search TopK from {} to {} for better coverage", currentTopK, expandedTopK);
+                progressConsumer.accept("📊 Expanding search breadth: " + currentTopK + " → " + expandedTopK + " files");
+            }
+            
             queryIntent.setRecommendedTopK(expandedTopK);
-            log.info("Expanded search TopK from {} to {} for better coverage", currentTopK, expandedTopK);
-            progressConsumer.accept("📊 Expanding search breadth: " + currentTopK + " → " + expandedTopK + " files");
         }
         
         // Refine individual workers based on QA critique (existing logic)
