@@ -85,19 +85,62 @@ export const IngestionPortal = () => {
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files?.[0]) return;
+        
+        const file = e.target.files[0];
+        
+        // Validate file type
+        if (!file.name.toLowerCase().endsWith('.zip')) {
+            setStatus('error');
+            setMessage('Please upload a ZIP file.');
+            setTimeout(() => setStatus('idle'), 3000);
+            return;
+        }
+        
+        // Check file size (e.g., 500MB limit)
+        const maxSize = 500 * 1024 * 1024; // 500MB
+        if (file.size > maxSize) {
+            setStatus('error');
+            setMessage(`File size exceeds limit. Maximum size is 500MB.`);
+            setTimeout(() => setStatus('idle'), 3000);
+            return;
+        }
+        
         setStatus('loading');
+        setMessage(`Uploading ${file.name}...`);
+        
         const formData = new FormData();
-        formData.append('file', e.target.files[0]);
+        formData.append('file', file);
         if (groupName) formData.append('groupName', groupName);
 
         try {
-            await api.uploadZip(formData);
+            const response = await api.uploadZip(formData);
             setStatus('success');
-            setMessage('ZIP archive uploaded and projects registered.');
+            setMessage(response.data || 'ZIP archive uploaded and projects registered.');
             setTimeout(() => setStatus('idle'), 5000);
-        } catch (error) {
-            setStatus('idle');
-            setMessage('Upload failed.');
+            
+            // Clear file input
+            e.target.value = '';
+        } catch (error: any) {
+            console.error('Upload error:', error);
+            setStatus('error');
+            
+            // Better error messages
+            if (error.response) {
+                // Server responded with error
+                const errorMsg = error.response.data || error.response.statusText;
+                setMessage(`Upload failed: ${errorMsg} (Status: ${error.response.status})`);
+            } else if (error.request) {
+                // Request made but no response
+                setMessage('Upload failed: No response from server. Please check if ingestion-engine is running.');
+            } else {
+                // Error in request setup
+                setMessage(`Upload failed: ${error.message}`);
+            }
+            
+            setTimeout(() => setStatus('idle'), 5000);
+            
+            // Clear file input
+            e.target.value = '';
         }
     };
 

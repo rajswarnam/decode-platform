@@ -14,10 +14,18 @@ public class CorsConfig {
             @Override
             public void addCorsMappings(CorsRegistry registry) {
                 registry.addMapping("/**")
-                        .allowedOrigins("http://localhost:5173", "http://localhost:4173") // Explicit frontend origins
-                        .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                        .allowedOrigins(
+                                "http://localhost:5173",  // Vite dev server
+                                "http://localhost:4173",  // Vite preview
+                                "http://localhost:3000",  // Production build
+                                "http://localhost:8080",  // Docker/K8s
+                                "http://web-frontend:3000", // Docker service name
+                                "*"  // Allow all origins (adjust for production security)
+                        )
+                        .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")
                         .allowedHeaders("*")
-                        .allowCredentials(true);
+                        .allowCredentials(true)
+                        .maxAge(3600); // Cache preflight requests for 1 hour
             }
         };
     }

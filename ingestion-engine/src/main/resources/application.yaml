@@ -17,6 +17,14 @@ spring:
         jdbc:
           lob:
             non_contextual_creation: true
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 500MB
+      max-request-size: 500MB
+      file-size-threshold: 10MB
+server:
+  max-http-header-size: 16KB
 
 minio:
   endpoint: http://minio:9000

@@ -179,38 +179,78 @@ public class IngestionController {
 
     @PostMapping("/upload-zip")
     public ResponseEntity<String> uploadZip(@RequestParam("file") MultipartFile file, @RequestParam(required = false) String groupName) throws IOException {
-        log.info("📂 Received ZIP Upload: {}", file.getOriginalFilename());
+        log.info("📂 Received ZIP Upload: {} (size: {} bytes)", file.getOriginalFilename(), file.getSize());
+
+        // Validate file
+        if (file.isEmpty()) {
+            log.warn("Received empty ZIP file");
+            return ResponseEntity.badRequest().body("ZIP file is empty");
+        }
+
+        // Validate file name
+        String originalFilename = file.getOriginalFilename();
+        if (originalFilename == null || !originalFilename.toLowerCase().endsWith(".zip")) {
+            log.warn("Invalid file type: {}", originalFilename);
+            return ResponseEntity.badRequest().body("File must be a ZIP archive");
+        }
+
+        // Check file size (e.g., 500MB limit)
+        long maxSize = 500 * 1024 * 1024; // 500MB
+        if (file.getSize() > maxSize) {
+            log.warn("ZIP file too large: {} bytes (max: {} bytes)", file.getSize(), maxSize);
+            return ResponseEntity.badRequest().body("ZIP file exceeds maximum size of 500MB");
+        }
 
         Path tempDir = Files.createTempDirectory("decode-upload-");
         try {
+            int extractedFiles = 0;
             try (ZipInputStream zis = new ZipInputStream(file.getInputStream())) {
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
-                    File newFile = new File(tempDir.toFile(), entry.getName());
+                    // Security: Prevent zip slip vulnerability
+                    String entryName = entry.getName();
+                    Path resolvedPath = tempDir.resolve(entryName).normalize();
+                    
+                    if (!resolvedPath.startsWith(tempDir.normalize())) {
+                        log.warn("Zip slip detected: {}", entryName);
+                        throw new SecurityException("Invalid entry in ZIP file: " + entryName);
+                    }
+
+                    File newFile = resolvedPath.toFile();
                     if (entry.isDirectory()) {
                         newFile.mkdirs();
                     } else {
                         newFile.getParentFile().mkdirs();
                         try (FileOutputStream fos = new FileOutputStream(newFile)) {
-                            byte[] buffer = new byte[1024];
+                            byte[] buffer = new byte[8192]; // Increased buffer size
                             int len;
                             while ((len = zis.read(buffer)) > 0) {
                                 fos.write(buffer, 0, len);
                             }
+                            extractedFiles++;
                         }
                     }
                 }
             }
 
-            String originalFilename = file.getOriginalFilename();
+            log.info("Extracted {} files from ZIP archive to {}", extractedFiles, tempDir);
+
             String displayProjectName = (originalFilename != null && originalFilename.contains("."))
                     ? originalFilename.substring(0, originalFilename.lastIndexOf('.'))
                     : "Manual Upload";
 
+            log.info("Starting project discovery for uploaded ZIP: {}", displayProjectName);
             projectDiscoveryService.discoverAndRegisterProjects(tempDir.toString(), "manual-upload", displayProjectName, groupName);
             
-            return ResponseEntity.ok("Zip archive processed and projects registered.");
+            log.info("✅ ZIP upload and project registration complete: {}", displayProjectName);
+            return ResponseEntity.ok("Zip archive processed and projects registered. Extracted " + extractedFiles + " files.");
             
+        } catch (SecurityException e) {
+            log.error("Security error processing ZIP file", e);
+            return ResponseEntity.status(400).body("Security error: " + e.getMessage());
+        } catch (Exception e) {
+            log.error("Error processing ZIP file: {}", file.getOriginalFilename(), e);
+            return ResponseEntity.status(500).body("Error processing ZIP file: " + e.getMessage());
         } finally {
             // CLEANUP ZIP EXTRACT
             log.info("Cleaning up temp zip directory: {}", tempDir);
