@@ -256,6 +256,18 @@ public class InternalLlmClientService {
                 messages.add(userMsg);
                 requestBody.put("messages", messages);
 
+                // DEBUG: Print complete request for manual testing
+                ObjectMapper mapper = new ObjectMapper();
+                String requestBodyJson = mapper.writeValueAsString(requestBody);
+                log.info("=== NON-STREAMING REQUEST TO INTERNAL GATEWAY ===");
+                log.info("URL: {}", endpoint);
+                log.info("Method: POST");
+                log.info("Headers:");
+                log.info("  Content-Type: {}", headers.getContentType());
+                log.info("  Authorization: Bearer {}", accessToken);
+                log.info("Body: {}", requestBodyJson);
+                log.info("==================================================");
+
                 HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
                 ResponseEntity<Map> response = restTemplate.exchange(
