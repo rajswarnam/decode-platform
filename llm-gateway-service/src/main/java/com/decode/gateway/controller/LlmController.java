@@ -124,8 +124,8 @@ public class LlmController {
     public Map<String, Object> completions(@RequestBody ChatRequest request) {
         log.info("Gateway non-streaming request: model={} stream={}", request.getModel(), request.isStream());
         
-        // Note: Spring AI might send stream=true but call this endpoint
-        // We need to handle both cases properly
+        // CRITICAL: Spring AI might send stream=true even to this non-streaming endpoint
+        // We need to respect the stream parameter and call internal gateway accordingly
 
         String userMessage = request.getMessages().stream()
                 .filter(m -> "user".equals(m.getRole()))
@@ -137,10 +137,14 @@ public class LlmController {
 
         String content = null;
         try {
+            // IMPORTANT: Use request.isStream() to determine if we should call streaming or not
+            boolean useStreaming = request.isStream() != null && request.isStream();
+            log.info("Calling internal gateway with stream={}", useStreaming);
+            
             content = internalLlmClientService.streamCompletion(
                     userMessage,
                     request.getModel(),
-                    false
+                    useStreaming  // Pass the stream parameter from request
             ).blockFirst(); // Get single result (non-streaming)
         } catch (Exception e) {
             log.error("Error calling internal LLM gateway", e);
