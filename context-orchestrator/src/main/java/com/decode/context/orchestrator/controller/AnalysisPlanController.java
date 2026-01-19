@@ -22,7 +22,7 @@ public class AnalysisPlanController {
 
     @GetMapping("/{sessionId}")
     public ResponseEntity<AnalysisPlanDTO> getAnalysisPlan(@PathVariable String sessionId) {
-        log.info("Fetching analysis plan for session: {}", sessionId);
+        log.debug("Fetching analysis plan for session: {}", sessionId);
         
         AgentOrchestrator.CurrentExecutionPlan plan = agentOrchestrator.getCurrentPlan(sessionId);
         

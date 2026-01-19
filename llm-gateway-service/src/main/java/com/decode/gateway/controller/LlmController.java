@@ -32,7 +32,7 @@ public class LlmController {
     // Dedicated streaming endpoint (alternative to /completions with stream=true)
     @PostMapping(value = "/completions/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter completionsStream(@RequestBody ChatRequest request) {
-        log.info("Gateway streaming request: model={} stream={}", request.getModel(), request.isStream());
+        log.debug("Gateway streaming request: model={} stream={}", request.getModel(), request.isStream());
 
         String userMessage = request.getMessages().stream()
                 .filter(m -> "user".equals(m.getRole()))
@@ -107,7 +107,7 @@ public class LlmController {
     // Returns Flux<ServerSentEvent> when stream=true, Map when stream=false (OpenAI API compatible)
     @PostMapping(value = "/completions")
     public Object completions(@RequestBody ChatRequest request) {
-        log.info("Gateway request: model={} stream={}", request.getModel(), request.isStream());
+        log.debug("Gateway request: model={} stream={}", request.getModel(), request.isStream());
         
         String userMessage = request.getMessages().stream()
                 .filter(m -> "user".equals(m.getRole()))

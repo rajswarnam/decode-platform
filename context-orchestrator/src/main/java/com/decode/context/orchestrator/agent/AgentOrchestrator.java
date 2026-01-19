@@ -1083,7 +1083,7 @@ public class AgentOrchestrator {
             }
         }
         
-        log.info("Retrieved {} unique files for worker {} (symbols found: {}, with source file: {})", 
+        log.debug("Retrieved {} unique files for worker {} (symbols found: {}, with source file: {})", 
             processedFiles.size(), task.getPersona(), symbolsFound.get(), symbolsWithSourceFile.get());
         return sb.toString();
     }

@@ -48,10 +48,9 @@ public class AzureAdTokenService {
             if (cachedAccessToken != null && tokenExpiryTime != null 
                     && Instant.now().isBefore(tokenExpiryTime.minusSeconds(300))) {
                 log.debug("Using cached Azure AD access token");
-                // DEBUG: Print cached bearer token for manual testing
-                log.info("=== USING CACHED BEARER TOKEN ===");
-                log.info("Bearer Token: {}", cachedAccessToken);
-                log.info("==================================");
+                // DEBUG: Print cached bearer token for manual testing (debug level to reduce I/O)
+                log.debug("=== USING CACHED BEARER TOKEN ===");
+                log.debug("Bearer Token: {}", cachedAccessToken);
                 return cachedAccessToken;
             }
 
@@ -88,10 +87,9 @@ public class AzureAdTokenService {
                 tokenExpiryTime = Instant.now().plusSeconds(expiresIn);
                 
                 log.info("Successfully obtained Azure AD access token (expires in {} seconds)", expiresIn);
-                // DEBUG: Print bearer token for manual testing
-                log.info("=== BEARER TOKEN FOR MANUAL TESTING ===");
-                log.info("Bearer Token: {}", cachedAccessToken);
-                log.info("========================================");
+                // DEBUG: Print bearer token for manual testing (debug level to reduce I/O)
+                log.debug("=== BEARER TOKEN FOR MANUAL TESTING ===");
+                log.debug("Bearer Token: {}", cachedAccessToken);
                 return cachedAccessToken;
             } else {
                 throw new RuntimeException("Failed to obtain Azure AD access token: " + response.getStatusCode());

@@ -75,14 +75,14 @@ public class InternalLlmClientService {
                 // DEBUG: Print complete request for manual testing
                 ObjectMapper requestMapper = new ObjectMapper();
                 String requestBodyJson = requestMapper.writeValueAsString(requestBody);
-                log.info("=== STREAMING REQUEST TO INTERNAL GATEWAY ===");
-                log.info("URL: {}", endpoint);
-                log.info("Method: POST");
-                log.info("Headers:");
-                log.info("  Content-Type: {}", headers.getContentType());
-                log.info("  Authorization: Bearer {}", accessToken);
-                log.info("Body: {}", requestBodyJson);
-                log.info("==============================================");
+                log.debug("=== STREAMING REQUEST TO INTERNAL GATEWAY ===");
+                log.debug("URL: {}", endpoint);
+                log.debug("Method: POST");
+                log.debug("Headers:");
+                log.debug("  Content-Type: {}", headers.getContentType());
+                log.debug("  Authorization: Bearer {}", accessToken);
+                log.debug("Body: {}", requestBodyJson);
+                log.debug("==============================================");
 
                 HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
@@ -126,16 +126,14 @@ public class InternalLlmClientService {
                                             ObjectMapper mapper = new ObjectMapper();
                                             Map<String, Object> chunk = mapper.readValue(data, Map.class);
                                             
-                                            // LOG THE ACTUAL CHUNK FORMAT
-                                            log.info("=== RAW CHUNK FROM INTERNAL GATEWAY ===");
-                                            log.info("{}", data);
-                                            log.info("=======================================");
+                                            // DEBUG: Log chunk format only at debug level (very verbose)
+                                            log.debug("=== RAW CHUNK FROM INTERNAL GATEWAY ===");
+                                            log.debug("{}", data);
                                             
                                             // Transform if needed - ensure it has delta, not message
                                             String transformedChunk = transformStreamingChunk(chunk);
-                                            log.info("=== TRANSFORMED CHUNK FOR SPRING AI ===");
-                                            log.info("{}", transformedChunk);
-                                            log.info("=======================================");
+                                            log.debug("=== TRANSFORMED CHUNK FOR SPRING AI ===");
+                                            log.debug("{}", transformedChunk);
                                             
                                             sink.next(transformedChunk);
                                             hasContent = true;
@@ -329,14 +327,13 @@ public class InternalLlmClientService {
                 // DEBUG: Print complete request for manual testing
                 ObjectMapper requestMapper = new ObjectMapper();
                 String requestBodyJson = requestMapper.writeValueAsString(requestBody);
-                log.info("=== NON-STREAMING REQUEST TO INTERNAL GATEWAY ===");
-                log.info("URL: {}", endpoint);
-                log.info("Method: POST");
-                log.info("Headers:");
-                log.info("  Content-Type: {}", headers.getContentType());
-                log.info("  Authorization: Bearer {}", accessToken);
-                log.info("Body: {}", requestBodyJson);
-                log.info("==================================================");
+                log.debug("=== NON-STREAMING REQUEST TO INTERNAL GATEWAY ===");
+                log.debug("URL: {}", endpoint);
+                log.debug("Method: POST");
+                log.debug("Headers:");
+                log.debug("  Content-Type: {}", headers.getContentType());
+                log.debug("  Authorization: Bearer {}", accessToken);
+                log.debug("Body: {}", requestBodyJson);
 
                 HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
