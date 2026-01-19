@@ -31,7 +31,7 @@ public class LlmController {
 
     // Dedicated streaming endpoint (alternative to /completions with stream=true)
     @PostMapping(value = "/completions/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public ResponseEntity<SseEmitter> completionsStream(@RequestBody ChatRequest request) {
+    public SseEmitter completionsStream(@RequestBody ChatRequest request) {
         log.info("Gateway streaming request: model={} stream={}", request.getModel(), request.isStream());
 
         String userMessage = request.getMessages().stream()
