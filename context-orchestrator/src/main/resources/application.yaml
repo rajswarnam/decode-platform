@@ -28,10 +28,10 @@ spring:
         observation:
           enabled: false
       embedding:
-        enabled: false # Correctly disables OpenAI embedding bean
+        enabled: true # Enable OpenAI embeddings for query embedding (documents embedded by vectorizer-service)
     embedding:
       transformer:
-        enabled: false # Disable transformer embeddings - context-orchestrator doesn't need embeddings
+        enabled: false # Disable transformer embeddings - use OpenAI for query embedding
     vectorstore:
       qdrant:
         host: qdrant
