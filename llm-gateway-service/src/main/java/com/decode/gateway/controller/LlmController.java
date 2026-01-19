@@ -47,7 +47,7 @@ public class LlmController {
         return internalLlmClientService.streamCompletion(userMessage, request.getModel(), true)
                 .onErrorResume(error -> {
                     log.error("Error in streaming completion", error);
-                    // Return error as a valid SSE chunk instead of failing
+                    // Return error as a valid JSON chunk string instead of failing
                     Map<String, Object> delta = new HashMap<>();
                     delta.put("content", "Error: " + error.getMessage());
 
@@ -64,10 +64,11 @@ public class LlmController {
                     chunk.put("choices", Collections.singletonList(choice));
 
                     try {
-                        return Flux.just(ServerSentEvent.builder(objectMapper.writeValueAsString(chunk)).build());
+                        // Return Flux<String> (JSON string), not Flux<ServerSentEvent>
+                        return Flux.just(objectMapper.writeValueAsString(chunk));
                     } catch (Exception e) {
                         log.error("Error creating error chunk", e);
-                        return Flux.just(ServerSentEvent.builder("{\"error\":\"" + error.getMessage() + "\"}").build());
+                        return Flux.just("{\"error\":\"" + error.getMessage().replace("\"", "\\\"") + "\"}");
                     }
                 })
                 .map(content -> {
