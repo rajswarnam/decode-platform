@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -122,8 +123,8 @@ public class LlmController {
 
     // Unified endpoint that handles both streaming and non-streaming
     // Returns SSE when stream=true, JSON when stream=false (OpenAI API compatible)
-    @PostMapping(value = "/completions")
-    public Object completions(@RequestBody ChatRequest request) {
+    @PostMapping(value = "/completions", produces = {MediaType.APPLICATION_JSON_VALUE, MediaType.TEXT_EVENT_STREAM_VALUE})
+    public ResponseEntity<?> completions(@RequestBody ChatRequest request) {
         log.info("Gateway request: model={} stream={}", request.getModel(), request.isStream());
         
         String userMessage = request.getMessages().stream()
@@ -139,7 +140,7 @@ public class LlmController {
             String requestId = "chatcmpl-" + UUID.randomUUID().toString();
             long created = System.currentTimeMillis() / 1000;
 
-            return internalLlmClientService.streamCompletion(userMessage, request.getModel(), true)
+            Flux<ServerSentEvent<String>> sseFlux = internalLlmClientService.streamCompletion(userMessage, request.getModel(), true)
                     .onErrorResume(error -> {
                         log.error("Error in streaming completion", error);
                         Map<String, Object> delta = new HashMap<>();
@@ -203,6 +204,10 @@ public class LlmController {
                         }
                     })
                     .concatWith(Flux.just(ServerSentEvent.builder("data: [DONE]").build()));
+            
+            return ResponseEntity.ok()
+                    .contentType(MediaType.TEXT_EVENT_STREAM)
+                    .body(sseFlux);
         } else {
             // Return non-streaming response (single JSON)
             String content = null;
@@ -244,7 +249,9 @@ public class LlmController {
             result.put("choices", Collections.singletonList(choice));
 
             log.debug("Returning non-streaming response: choices={}, message={}", choice, message);
-            return result;
+            return ResponseEntity.ok()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(result);
         }
     }
 }
