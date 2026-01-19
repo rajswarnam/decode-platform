@@ -37,6 +37,7 @@ public class ParserRunner implements CommandLineRunner {
 
     private final ProjectRepository projectRepository;
     private final ParserOrchestratorService parserService;
+    private final SymbolRepository symbolRepository;
 
     @Override
     @Transactional
@@ -44,21 +45,35 @@ public class ParserRunner implements CommandLineRunner {
         log.info("--- Starting Code Parser Batch Job (Cloud-Native Mode) ---");
 
         List<Project> projects = projectRepository.findAll();
-        log.info("Found {} projects to process", projects.size());
+        log.info("Found {} projects in database", projects.size());
 
         if (projects.isEmpty()) {
             log.warn("No projects found in DB. Please run Ingestion Engine first.");
             return;
         }
 
+        int skippedCount = 0;
+        int processedCount = 0;
+
         for (Project project : projects) {
             try {
+                // Check if this project already has symbols (already parsed)
+                long symbolCount = symbolRepository.countBySourceFile_Project(project);
+                if (symbolCount > 0) {
+                    log.debug("Project '{}' already has {} symbols, skipping re-parsing", project.getName(), symbolCount);
+                    skippedCount++;
+                    continue;
+                }
+
+                log.info("Processing project: {} (no symbols found)", project.getName());
                 parserService.processProject(project);
+                processedCount++;
             } catch (Exception e) {
                 log.error("Parsing failed for project {}", project.getName(), e);
             }
         }
 
-        log.info("--- Code Parser Batch Job Complete ---");
+        log.info("--- Code Parser Batch Job Complete --- Processed: {}, Skipped: {} (already parsed)", 
+                processedCount, skippedCount);
     }
 }

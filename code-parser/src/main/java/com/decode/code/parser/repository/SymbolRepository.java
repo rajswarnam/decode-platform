@@ -15,4 +15,6 @@ public interface SymbolRepository extends JpaRepository<Symbol, UUID> {
     Optional<Symbol> findTopByNameAndSourceFile_ProjectOrderByIdDesc(String name, Project project);
     
     long countBySourceFile_Project_Id(UUID projectId);
+    
+    long countBySourceFile_Project(Project project);
 }
