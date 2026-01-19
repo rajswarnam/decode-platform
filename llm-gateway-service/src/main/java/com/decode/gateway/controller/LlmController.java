@@ -124,8 +124,8 @@ public class LlmController {
     public Map<String, Object> completions(@RequestBody ChatRequest request) {
         log.info("Gateway non-streaming request: model={} stream={}", request.getModel(), request.isStream());
         
-        // Note: If Spring AI sends stream=true, it should call /completions/stream instead
-        // But we handle it gracefully by treating it as non-streaming
+        // Note: Spring AI might send stream=true but call this endpoint
+        // We need to handle both cases properly
 
         String userMessage = request.getMessages().stream()
                 .filter(m -> "user".equals(m.getRole()))
@@ -153,22 +153,26 @@ public class LlmController {
             content = "Error: No response from internal LLM gateway";
         }
 
+        // Always create a valid message object - Spring AI requires this
         Map<String, Object> message = new HashMap<>();
         message.put("role", "assistant");
-        message.put("content", content);
+        message.put("content", content != null ? content : ""); // Ensure content is never null
 
+        // Always create a valid choice with message - Spring AI requires choice.message() to not be null
         Map<String, Object> choice = new HashMap<>();
         choice.put("index", 0);
-        choice.put("message", message); // Always ensure message is not null
+        choice.put("message", message); // CRITICAL: message must never be null
         choice.put("finish_reason", "stop");
 
+        // Always create a valid response structure
         Map<String, Object> result = new HashMap<>();
         result.put("id", "chatcmpl-" + UUID.randomUUID());
         result.put("object", "chat.completion");
         result.put("created", System.currentTimeMillis() / 1000);
         result.put("model", request.getModel() != null ? request.getModel() : "gpt-4o");
-        result.put("choices", Collections.singletonList(choice)); // Always include at least one choice
+        result.put("choices", Collections.singletonList(choice)); // Always include at least one choice with message
 
+        log.debug("Returning response: choices={}, message={}", choice, message);
         return result;
     }
 }

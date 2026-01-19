@@ -256,6 +256,8 @@ public class InternalLlmClientService {
                 if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
                     // Extract content from response
                     Map<String, Object> body = response.getBody();
+                    log.debug("Internal gateway response body: {}", body);
+                    
                     // Adjust based on your internal gateway's response format
                     String content = extractContentFromResponse(body);
                     
@@ -271,7 +273,17 @@ public class InternalLlmClientService {
                     log.error("Internal LLM gateway returned status: {} with body: {}", 
                             response.getStatusCode(), response.getBody());
                     // Return error message instead of erroring the Flux
-                    sink.next("Error: Internal LLM gateway returned status " + response.getStatusCode());
+                    String errorMsg = "Error: Internal LLM gateway returned status " + response.getStatusCode();
+                    if (response.getBody() != null) {
+                        try {
+                            ObjectMapper mapper = new ObjectMapper();
+                            String errorBody = mapper.writeValueAsString(response.getBody());
+                            errorMsg += " - " + errorBody;
+                        } catch (Exception e) {
+                            log.debug("Could not serialize error body", e);
+                        }
+                    }
+                    sink.next(errorMsg);
                     sink.complete();
                 }
             } catch (Exception e) {
