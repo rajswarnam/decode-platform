@@ -12,6 +12,7 @@ import org.springframework.web.client.RestTemplate;
 import reactor.core.publisher.Flux;
 
 import java.util.*;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
@@ -84,17 +85,27 @@ public class InternalLlmClientService {
                     },
                     response -> {
                         try (Scanner scanner = new Scanner(response.getBody())) {
+                            boolean hasContent = false;
                             while (scanner.hasNextLine()) {
                                 String line = scanner.nextLine();
                                 if (line.startsWith("data:")) {
                                     String data = line.substring(5).trim();
                                     if (!data.isEmpty() && !"[DONE]".equals(data)) {
                                         sink.next(data);
+                                        hasContent = true;
                                     } else if ("[DONE]".equals(data)) {
                                         break;
                                     }
                                 }
                             }
+                            // If no content was received, send an error chunk
+                            if (!hasContent) {
+                                log.warn("No content received from internal gateway streaming response");
+                                sink.next(createErrorChunk("No content received from gateway"));
+                            }
+                        } catch (Exception e) {
+                            log.error("Error reading streaming response", e);
+                            sink.next(createErrorChunk("Error reading response: " + e.getMessage()));
                         }
                         return null;
                     }
@@ -102,9 +113,39 @@ public class InternalLlmClientService {
                 sink.complete();
             } catch (Exception e) {
                 log.error("Error calling internal LLM gateway (streaming)", e);
-                sink.error(e);
+                // Send error as a chunk instead of erroring the Flux
+                sink.next(createErrorChunk("Error calling gateway: " + e.getMessage()));
+                sink.complete();
             }
         });
+    }
+
+    /**
+     * Create an error chunk in OpenAI streaming format.
+     */
+    private String createErrorChunk(String errorMessage) {
+        try {
+            Map<String, Object> delta = new HashMap<>();
+            delta.put("content", "Error: " + errorMessage);
+
+            Map<String, Object> choice = new HashMap<>();
+            choice.put("index", 0);
+            choice.put("delta", delta);
+            choice.put("finish_reason", null);
+
+            Map<String, Object> chunk = new HashMap<>();
+            chunk.put("id", "error-" + UUID.randomUUID());
+            chunk.put("object", "chat.completion.chunk");
+            chunk.put("created", System.currentTimeMillis() / 1000);
+            chunk.put("model", "error");
+            chunk.put("choices", Collections.singletonList(choice));
+
+            ObjectMapper mapper = new ObjectMapper();
+            return mapper.writeValueAsString(chunk);
+        } catch (Exception e) {
+            log.error("Error creating error chunk", e);
+            return "{\"error\":\"" + errorMessage.replace("\"", "\\\"") + "\"}";
+        }
     }
 
     /**
