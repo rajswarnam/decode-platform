@@ -138,7 +138,7 @@ public class LlmController {
         String content = null;
         try {
             // IMPORTANT: Use request.isStream() to determine if we should call streaming or not
-            boolean useStreaming = request.isStream() != null && request.isStream();
+            boolean useStreaming = request.isStream();
             log.info("Calling internal gateway with stream={}", useStreaming);
             
             content = internalLlmClientService.streamCompletion(
