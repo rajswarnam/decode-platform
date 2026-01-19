@@ -1,6 +1,9 @@
 spring:
   application:
     name: context-orchestrator
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.autoconfigure.chat.client.observation.ChatClientObservationAutoConfiguration
   datasource:
     url: jdbc:postgresql://postgres:5432/decode
     username: ${SPRING_DATASOURCE_USERNAME:decode_user}
