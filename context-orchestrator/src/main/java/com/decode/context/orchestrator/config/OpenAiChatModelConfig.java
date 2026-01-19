@@ -3,12 +3,13 @@ package com.decode.context.orchestrator.config;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Manual ChatModel configuration.
+ * Manual ChatModel configuration for Spring AI M6.
  * Required because we're using spring-ai-openai (core) instead of 
  * spring-ai-openai-spring-boot-starter to avoid broken auto-configuration.
  */
@@ -26,12 +27,11 @@ public class OpenAiChatModelConfig {
 
     @Bean
     public ChatModel chatModel() {
-        return OpenAiChatModel.builder()
-                .apiKey(apiKey)
-                .baseUrl(baseUrl)
-                .options(OpenAiChatOptions.builder()
-                        .withModel(model)
-                        .build())
+        // Spring AI M6 API
+        OpenAiApi openAiApi = new OpenAiApi(baseUrl, apiKey);
+        OpenAiChatOptions options = OpenAiChatOptions.builder()
+                .withModel(model)
                 .build();
+        return new OpenAiChatModel(openAiApi, options);
     }
 }
