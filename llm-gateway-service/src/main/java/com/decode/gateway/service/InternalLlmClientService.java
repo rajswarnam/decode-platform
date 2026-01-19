@@ -231,16 +231,41 @@ public class InternalLlmClientService {
                 if (choice.containsKey("message") && !choice.containsKey("delta")) {
                     log.debug("Transforming 'message' field to 'delta' for Spring AI compatibility");
                     Object message = choice.get("message");
-                    choice.put("delta", message);
-                    choice.remove("message");
+                    // Ensure message is not null
+                    if (message != null) {
+                        choice.put("delta", message);
+                        choice.remove("message");
+                    } else {
+                        // If message is null, create an empty delta
+                        log.warn("Message field is null, creating empty delta");
+                        choice.put("delta", new HashMap<>());
+                        choice.remove("message");
+                    }
                 }
                 
-                // Ensure delta has role if content is present
+                // Ensure delta exists and has proper structure
                 if (choice.containsKey("delta")) {
-                    Map<String, Object> delta = (Map<String, Object>) choice.get("delta");
-                    if (delta != null && delta.containsKey("content") && !delta.containsKey("role")) {
-                        delta.put("role", "assistant");
+                    Object deltaObj = choice.get("delta");
+                    if (deltaObj == null) {
+                        log.warn("Delta is null, creating empty delta");
+                        choice.put("delta", new HashMap<>());
+                    } else if (deltaObj instanceof Map) {
+                        Map<String, Object> delta = (Map<String, Object>) deltaObj;
+                        // Ensure delta has role if content is present
+                        if (delta.containsKey("content") && !delta.containsKey("role")) {
+                            delta.put("role", "assistant");
+                        }
+                        // If delta is empty and finish_reason is not set, add role
+                        if (delta.isEmpty() && choice.get("finish_reason") == null) {
+                            delta.put("role", "assistant");
+                        }
                     }
+                } else {
+                    // If neither message nor delta exists, create empty delta
+                    log.warn("Choice has neither message nor delta, creating empty delta");
+                    Map<String, Object> emptyDelta = new HashMap<>();
+                    emptyDelta.put("role", "assistant");
+                    choice.put("delta", emptyDelta);
                 }
             }
         }
