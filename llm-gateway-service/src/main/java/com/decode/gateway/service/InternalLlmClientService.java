@@ -150,10 +150,20 @@ public class InternalLlmClientService {
                     // Adjust based on your internal gateway's response format
                     String content = extractContentFromResponse(body);
                     
+                    // Always ensure content is not null
+                    if (content == null || content.isEmpty()) {
+                        log.warn("Extracted null or empty content from gateway response: {}", body);
+                        content = "Error: Could not extract content from gateway response";
+                    }
+                    
                     sink.next(content);
                     sink.complete();
                 } else {
-                    sink.error(new RuntimeException("Internal LLM gateway returned: " + response.getStatusCode()));
+                    log.error("Internal LLM gateway returned status: {} with body: {}", 
+                            response.getStatusCode(), response.getBody());
+                    // Return error message instead of erroring the Flux
+                    sink.next("Error: Internal LLM gateway returned status " + response.getStatusCode());
+                    sink.complete();
                 }
             } catch (Exception e) {
                 log.error("Error calling internal LLM gateway (non-streaming)", e);
@@ -169,18 +179,47 @@ public class InternalLlmClientService {
     @SuppressWarnings("unchecked")
     private String extractContentFromResponse(Map<String, Object> response) {
         try {
+            // Check for error response first
+            if (response.containsKey("error")) {
+                Object error = response.get("error");
+                if (error instanceof Map) {
+                    Object message = ((Map<?, ?>) error).get("message");
+                    log.error("Gateway returned error: {}", message);
+                    return "Error: " + (message != null ? message.toString() : "Unknown error from gateway");
+                }
+                log.error("Gateway returned error: {}", error);
+                return "Error: " + error.toString();
+            }
+            
             List<Map<String, Object>> choices = (List<Map<String, Object>>) response.get("choices");
             if (choices != null && !choices.isEmpty()) {
                 Map<String, Object> choice = choices.get(0);
-                Map<String, Object> message = (Map<String, Object>) choice.get("message");
-                if (message != null) {
-                    return (String) message.get("content");
+                if (choice == null) {
+                    log.warn("First choice is null in response: {}", response);
+                    return "Error: Choice is null in gateway response";
                 }
+                
+                Map<String, Object> message = (Map<String, Object>) choice.get("message");
+                if (message == null) {
+                    log.warn("Message is null in choice: {}", choice);
+                    return "Error: Message is null in gateway response";
+                }
+                
+                Object content = message.get("content");
+                if (content == null) {
+                    log.warn("Content is null in message: {}", message);
+                    return "Error: Content is null in gateway response";
+                }
+                
+                return content.toString();
+            } else {
+                log.warn("No choices found in response: {}", response);
+                return "Error: No choices in gateway response";
             }
         } catch (Exception e) {
-            log.warn("Error extracting content from response", e);
+            log.error("Error extracting content from response: {}", response, e);
+            return "Error: Failed to parse gateway response: " + e.getMessage();
         }
-        return "";
     }
 
     /**

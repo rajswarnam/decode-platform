@@ -88,27 +88,39 @@ public class LlmController {
 
         tokenGovernor.acquireTokenBudget(userMessage);
 
-        String content = internalLlmClientService.streamCompletion(
-                userMessage,
-                request.getModel(),
-                false
-        ).blockFirst(); // Get single result (non-streaming)
+        String content = null;
+        try {
+            content = internalLlmClientService.streamCompletion(
+                    userMessage,
+                    request.getModel(),
+                    false
+            ).blockFirst(); // Get single result (non-streaming)
+        } catch (Exception e) {
+            log.error("Error calling internal LLM gateway", e);
+            content = "Error: " + e.getMessage();
+        }
+
+        // Ensure content is never null - Spring AI requires a valid message
+        if (content == null || content.isEmpty()) {
+            log.warn("Received null or empty content from internal gateway, using fallback");
+            content = "Error: No response from internal LLM gateway";
+        }
 
         Map<String, Object> message = new HashMap<>();
         message.put("role", "assistant");
-        message.put("content", content != null ? content : "");
+        message.put("content", content);
 
         Map<String, Object> choice = new HashMap<>();
         choice.put("index", 0);
-        choice.put("message", message);
+        choice.put("message", message); // Always ensure message is not null
         choice.put("finish_reason", "stop");
 
         Map<String, Object> result = new HashMap<>();
         result.put("id", "chatcmpl-" + UUID.randomUUID());
         result.put("object", "chat.completion");
         result.put("created", System.currentTimeMillis() / 1000);
-        result.put("model", request.getModel());
-        result.put("choices", Collections.singletonList(choice));
+        result.put("model", request.getModel() != null ? request.getModel() : "gpt-4o");
+        result.put("choices", Collections.singletonList(choice)); // Always include at least one choice
 
         return result;
     }
