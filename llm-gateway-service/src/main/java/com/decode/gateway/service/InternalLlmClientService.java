@@ -97,6 +97,8 @@ public class InternalLlmClientService {
                             } catch (Exception e) {
                                 sink.next(createErrorChunk("Gateway error " + statusCode.value()));
                             }
+                            // Send final chunk to signal completion
+                            sink.next(createFinalChunk());
                             return null;
                         }
                         
@@ -117,6 +119,7 @@ public class InternalLlmClientService {
                                             log.warn("Invalid JSON in streaming response: {}", data);
                                             // Send as error chunk instead
                                             sink.next(createErrorChunk("Invalid response format: " + data));
+                                            sink.next(createFinalChunk());
                                             hasContent = true;
                                         }
                                     } else if ("[DONE]".equals(data)) {
@@ -124,14 +127,18 @@ public class InternalLlmClientService {
                                     }
                                 }
                             }
-                            // If no content was received, send an error chunk
+                            // If no content was received, send an error chunk followed by final chunk
                             if (!hasContent) {
                                 log.warn("No content received from internal gateway streaming response");
                                 sink.next(createErrorChunk("No content received from gateway"));
+                                // Send final chunk with finish_reason to signal completion
+                                sink.next(createFinalChunk());
                             }
                         } catch (Exception e) {
                             log.error("Error reading streaming response", e);
                             sink.next(createErrorChunk("Error reading response: " + e.getMessage()));
+                            // Send final chunk to signal completion
+                            sink.next(createFinalChunk());
                         }
                         return null;
                     }
@@ -139,8 +146,9 @@ public class InternalLlmClientService {
                 sink.complete();
             } catch (Exception e) {
                 log.error("Error calling internal LLM gateway (streaming)", e);
-                // Send error as a chunk instead of erroring the Flux
+                // Send error as a chunk followed by final chunk instead of erroring the Flux
                 sink.next(createErrorChunk("Error calling gateway: " + e.getMessage()));
+                sink.next(createFinalChunk());
                 sink.complete();
             }
         });
@@ -148,11 +156,14 @@ public class InternalLlmClientService {
 
     /**
      * Create an error chunk in OpenAI streaming format.
+     * Returns both delta chunk and final message chunk.
      */
     private String createErrorChunk(String errorMessage) {
         try {
+            // First create delta chunk with error content
             Map<String, Object> delta = new HashMap<>();
             delta.put("content", "Error: " + errorMessage);
+            delta.put("role", "assistant"); // Add role to delta
 
             Map<String, Object> choice = new HashMap<>();
             choice.put("index", 0);
@@ -160,7 +171,8 @@ public class InternalLlmClientService {
             choice.put("finish_reason", null);
 
             Map<String, Object> chunk = new HashMap<>();
-            chunk.put("id", "error-" + UUID.randomUUID());
+            String chunkId = "error-" + UUID.randomUUID();
+            chunk.put("id", chunkId);
             chunk.put("object", "chat.completion.chunk");
             chunk.put("created", System.currentTimeMillis() / 1000);
             chunk.put("model", "error");
@@ -170,7 +182,12 @@ public class InternalLlmClientService {
             return mapper.writeValueAsString(chunk);
         } catch (Exception e) {
             log.error("Error creating error chunk", e);
-            return "{\"error\":\"" + errorMessage.replace("\"", "\\\"") + "\"}";
+            // Return minimal valid chunk format
+            return "{\"id\":\"error\",\"object\":\"chat.completion.chunk\",\"created\":" 
+                + (System.currentTimeMillis() / 1000) 
+                + ",\"model\":\"error\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Error: " 
+                + errorMessage.replace("\"", "\\\"").replace("\n", "\\n") 
+                + "\",\"role\":\"assistant\"},\"finish_reason\":null}]}";
         }
     }
 
