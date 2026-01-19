@@ -141,11 +141,39 @@ public class LlmController {
             boolean useStreaming = request.isStream();
             log.info("Calling internal gateway with stream={}", useStreaming);
             
-            content = internalLlmClientService.streamCompletion(
-                    userMessage,
-                    request.getModel(),
-                    useStreaming  // Pass the stream parameter from request
-            ).blockFirst(); // Get single result (non-streaming)
+            if (useStreaming) {
+                // For streaming responses, collect all chunks and extract content
+                StringBuilder contentBuilder = new StringBuilder();
+                internalLlmClientService.streamCompletion(userMessage, request.getModel(), true)
+                    .doOnNext(chunk -> {
+                        try {
+                            // Parse the JSON chunk to extract delta content
+                            Map<String, Object> chunkMap = objectMapper.readValue(chunk, Map.class);
+                            List<Map<String, Object>> choices = (List<Map<String, Object>>) chunkMap.get("choices");
+                            if (choices != null && !choices.isEmpty()) {
+                                Map<String, Object> choice = choices.get(0);
+                                Map<String, Object> delta = (Map<String, Object>) choice.get("delta");
+                                if (delta != null && delta.containsKey("content")) {
+                                    String deltaContent = (String) delta.get("content");
+                                    if (deltaContent != null) {
+                                        contentBuilder.append(deltaContent);
+                                    }
+                                }
+                            }
+                        } catch (Exception e) {
+                            log.warn("Error parsing streaming chunk: {}", e.getMessage());
+                        }
+                    })
+                    .blockLast(); // Wait for all chunks to complete
+                content = contentBuilder.toString();
+            } else {
+                // For non-streaming responses, get the single result
+                content = internalLlmClientService.streamCompletion(
+                        userMessage,
+                        request.getModel(),
+                        false
+                ).blockFirst();
+            }
         } catch (Exception e) {
             log.error("Error calling internal LLM gateway", e);
             content = "Error: " + e.getMessage();
