@@ -98,9 +98,8 @@ public class LlmController {
                 })
                 .subscribe();
 
-        return ResponseEntity.ok()
-                .contentType(MediaType.TEXT_EVENT_STREAM)
-                .body(emitter);
+        // Return SseEmitter directly - Spring MVC handles it specially
+        return emitter;
     }
 
     // Unified endpoint that handles both streaming and non-streaming
@@ -175,9 +174,8 @@ public class LlmController {
                     })
                     .subscribe(); // Start the reactive stream
 
-            return ResponseEntity.ok()
-                    .contentType(MediaType.TEXT_EVENT_STREAM)
-                    .body(emitter);
+            // Return SseEmitter directly - Spring MVC handles it specially
+            return emitter;
         } else {
             // Return non-streaming response (single JSON)
             String content = null;
