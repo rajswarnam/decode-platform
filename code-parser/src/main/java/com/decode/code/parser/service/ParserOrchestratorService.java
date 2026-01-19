@@ -63,12 +63,45 @@ public class ParserOrchestratorService {
     }
 
     private void triggerVectorizer(Project project) {
-        try {
-            String url = vectorizerUrl + "/api/vectorizer/trigger?projectId=" + project.getId();
-            log.info("Triggering Vectorizer: {}", url);
-            restTemplate.postForEntity(url, null, String.class);
-        } catch (Exception e) {
-            log.error("Failed to trigger vectorizer: {}", e.getMessage());
+        int maxRetries = 3;
+        int retryDelayMs = 2000; // 2 seconds
+        
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                String url = vectorizerUrl + "/api/vectorizer/trigger?projectId=" + project.getId();
+                log.info("Triggering Vectorizer (attempt {}/{}): {}", attempt, maxRetries, url);
+                
+                ResponseEntity<String> response = restTemplate.postForEntity(url, null, String.class);
+                
+                if (response.getStatusCode().is2xxSuccessful()) {
+                    log.info("✅ Successfully triggered vectorizer for project: {}", project.getName());
+                    return;
+                } else {
+                    log.warn("Vectorizer returned non-2xx status: {}", response.getStatusCode());
+                }
+            } catch (org.springframework.web.client.ResourceAccessException e) {
+                // Connection refused or service not ready
+                if (attempt < maxRetries) {
+                    log.warn("Vectorizer service not ready (attempt {}/{}), retrying in {}ms: {}", 
+                            attempt, maxRetries, retryDelayMs, e.getMessage());
+                    try {
+                        Thread.sleep(retryDelayMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        log.error("Interrupted while waiting for retry", ie);
+                        break;
+                    }
+                } else {
+                    log.error("Failed to trigger vectorizer after {} attempts: {}", maxRetries, e.getMessage());
+                    log.error("This means files were parsed but NOT vectorized. Manual trigger may be needed.");
+                }
+            } catch (Exception e) {
+                log.error("Failed to trigger vectorizer (attempt {}/{}): {}", attempt, maxRetries, e.getMessage());
+                if (attempt == maxRetries) {
+                    log.error("Vectorization failed for project: {}. Files are parsed but NOT vectorized.", project.getName());
+                }
+                break; // Don't retry for other exceptions
+            }
         }
     }
 
