@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import reactor.core.publisher.Flux;
@@ -84,6 +85,21 @@ public class InternalLlmClientService {
                         req.getBody().write(json);
                     },
                     response -> {
+                        // Check HTTP status code first
+                        HttpStatusCode statusCode = response.getStatusCode();
+                        if (!statusCode.is2xxSuccessful()) {
+                            log.error("Internal gateway returned error status: {} {}", statusCode.value(), statusCode);
+                            try {
+                                // Try to read error message from response body
+                                String errorBody = new String(response.getBody().readAllBytes());
+                                log.error("Error response body: {}", errorBody);
+                                sink.next(createErrorChunk("Gateway error " + statusCode.value() + ": " + errorBody));
+                            } catch (Exception e) {
+                                sink.next(createErrorChunk("Gateway error " + statusCode.value()));
+                            }
+                            return null;
+                        }
+                        
                         try (Scanner scanner = new Scanner(response.getBody())) {
                             boolean hasContent = false;
                             while (scanner.hasNextLine()) {
@@ -91,8 +107,18 @@ public class InternalLlmClientService {
                                 if (line.startsWith("data:")) {
                                     String data = line.substring(5).trim();
                                     if (!data.isEmpty() && !"[DONE]".equals(data)) {
-                                        sink.next(data);
-                                        hasContent = true;
+                                        // Validate that data is valid JSON before sending
+                                        try {
+                                            ObjectMapper mapper = new ObjectMapper();
+                                            mapper.readTree(data);
+                                            sink.next(data);
+                                            hasContent = true;
+                                        } catch (Exception e) {
+                                            log.warn("Invalid JSON in streaming response: {}", data);
+                                            // Send as error chunk instead
+                                            sink.next(createErrorChunk("Invalid response format: " + data));
+                                            hasContent = true;
+                                        }
                                     } else if ("[DONE]".equals(data)) {
                                         break;
                                     }
