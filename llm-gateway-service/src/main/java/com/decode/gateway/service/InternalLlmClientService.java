@@ -192,6 +192,31 @@ public class InternalLlmClientService {
     }
 
     /**
+     * Create a final chunk with finish_reason to signal stream completion.
+     */
+    private String createFinalChunk() {
+        try {
+            Map<String, Object> choice = new HashMap<>();
+            choice.put("index", 0);
+            choice.put("delta", new HashMap<>()); // Empty delta for final chunk
+            choice.put("finish_reason", "stop");
+
+            Map<String, Object> chunk = new HashMap<>();
+            chunk.put("id", "final-" + UUID.randomUUID());
+            chunk.put("object", "chat.completion.chunk");
+            chunk.put("created", System.currentTimeMillis() / 1000);
+            chunk.put("model", "error");
+            chunk.put("choices", Collections.singletonList(choice));
+
+            ObjectMapper mapper = new ObjectMapper();
+            return mapper.writeValueAsString(chunk);
+        } catch (Exception e) {
+            log.error("Error creating final chunk", e);
+            return "{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}";
+        }
+    }
+
+    /**
      * Non-streaming completion.
      */
     private Flux<String> streamCompletionNonStreaming(String userMessage, String model) {
