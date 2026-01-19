@@ -313,18 +313,186 @@ Create a dashboard to visualize:
 - Comparison across projects
 - Regression alerts
 
+## When Should Evaluations Run?
+
+### ❌ NOT on Every Prompt Execution
+
+**Evaluations should NOT run on every user query** because:
+- **Performance Impact**: Evals (especially LLM-as-judge) are slow and would degrade user experience
+- **Cost**: Running evals on every query would be prohibitively expensive
+- **Resource Usage**: Unnecessary load on systems and LLM services
+- **User Experience**: Users don't need evaluation metrics, they need fast responses
+
+### ✅ Evaluation Run Patterns
+
+#### 1. **CI/CD Pipeline** (Recommended)
+- **When**: On every PR, merge, or deployment
+- **Frequency**: Every code change
+- **Purpose**: Catch regressions before production
+- **Scope**: Full evaluation suite against golden datasets
+- **Example**:
+  ```bash
+  # Run in CI pipeline
+  ./scripts/run-evals.sh --suite full --golden-dataset tests/golden/
+  ```
+
+#### 2. **Scheduled Batch Evaluations** (Recommended)
+- **When**: Daily or weekly on a schedule
+- **Frequency**: Regular intervals (e.g., daily at 2 AM)
+- **Purpose**: Monitor quality trends over time
+- **Scope**: Full evaluation suite or specific categories
+- **Example**:
+  ```bash
+  # Cron job: Run daily at 2 AM
+  0 2 * * * /path/to/scripts/run-evals.sh --suite full
+  ```
+
+#### 3. **Sampling in Production** (Optional)
+- **When**: Sample a small percentage of real queries
+- **Frequency**: 1-5% of production queries
+- **Purpose**: Monitor real-world quality
+- **Scope**: End-to-end query evals only
+- **Implementation**:
+  ```java
+  // In SemanticExplorerController
+  if (shouldSampleForEval(query)) { // 1-5% random sampling
+      evalService.evaluateQueryAsync(query, response);
+  }
+  ```
+- **Note**: Run asynchronously, don't block user response
+
+#### 4. **On-Demand / Manual** (Development/Testing)
+- **When**: During development, testing, or debugging
+- **Frequency**: As needed
+- **Purpose**: Validate changes, debug issues, experiment
+- **Scope**: Any evaluation category
+- **Example**:
+  ```bash
+  # Manual run during development
+  ./scripts/run-evals.sh --category dictionary --project piggymetrics
+  ```
+
+#### 5. **A/B Testing** (Model/Prompt Changes)
+- **When**: Comparing different models, prompts, or configurations
+- **Frequency**: Before deploying changes
+- **Purpose**: Validate improvements
+- **Scope**: Full suite comparing baseline vs new version
+- **Example**:
+  ```bash
+  # Compare baseline vs new prompt
+  ./scripts/run-evals.sh --compare baseline.json new-prompt.json
+  ```
+
+#### 6. **Regression Testing** (Before Releases)
+- **When**: Before major releases or hotfixes
+- **Frequency**: Release gates
+- **Purpose**: Ensure no quality degradation
+- **Scope**: Full evaluation suite
+- **Example**:
+  ```bash
+  # Run before release
+  ./scripts/run-evals.sh --suite full --threshold 0.85
+  ```
+
+## Evaluation Execution Strategy
+
+### Architecture: Separate Evaluation Service
+
+**Keep evaluations separate from production code:**
+
+```
+Production Flow (Fast, No Evals):
+User Query → Context Orchestrator → LLM Gateway → Response ✅
+
+Evaluation Flow (Separate, Async):
+Golden Dataset → Eval Service → Metrics → Dashboard 📊
+```
+
+### Implementation Pattern
+
+```java
+// Production code (no evals)
+@RestController
+public class SemanticExplorerController {
+    
+    @PostMapping("/query")
+    public ResponseEntity<?> query(@RequestBody QueryRequest request) {
+        // Fast response, no evaluations
+        String answer = agentOrchestrator.processQuery(request.getQuery());
+        return ResponseEntity.ok(answer);
+    }
+}
+
+// Evaluation service (separate, async)
+@Service
+public class EvaluationOrchestrator {
+    
+    public EvalResult runEvaluations(String projectName) {
+        // Run evals against golden dataset
+        // Not called during normal user queries
+    }
+}
+```
+
+### Evaluation Configuration
+
+```yaml
+# application.yaml
+eval:
+  enabled: false  # Disabled in production
+  sampling:
+    enabled: false  # Disabled by default
+    rate: 0.01  # 1% if enabled
+  scheduled:
+    enabled: true  # Enable scheduled evals
+    cron: "0 2 * * *"  # Daily at 2 AM
+    suite: "full"  # Run full suite
+```
+
+## Recommended Evaluation Schedule
+
+| Evaluation Type | Frequency | Trigger | Scope |
+|----------------|-----------|---------|-------|
+| **Dictionary Service** | On PR, Daily | CI/CD, Cron | Full project |
+| **Vector Retrieval** | On PR, Daily | CI/CD, Cron | Golden queries |
+| **Symbol Parsing** | On PR, Weekly | CI/CD, Cron | Test projects |
+| **Semantic Analysis** | On PR, Weekly | CI/CD, Cron | Test queries |
+| **End-to-End Query** | On PR, Weekly | CI/CD, Cron | Full suite |
+| **Production Sampling** | Optional | Async, 1-5% | Real queries only |
+
+## Cost & Performance Considerations
+
+### Evaluation Costs
+- **LLM-as-Judge**: ~$0.01-0.10 per evaluation (depending on model)
+- **Full Suite**: ~$10-50 per run (depending on dataset size)
+- **Daily Runs**: ~$300-1500/month
+- **CI/CD Runs**: Included in development overhead
+
+### Performance Impact
+- **Production**: Zero impact (evals don't run)
+- **CI/CD**: 5-15 minutes per evaluation run (acceptable for PR checks)
+- **Scheduled**: Run during off-peak hours (e.g., 2 AM)
+
+### Recommendations
+1. **Start with CI/CD only** (catch regressions)
+2. **Add weekly scheduled runs** (monitor trends)
+3. **Optional production sampling** (if budget allows)
+4. **On-demand for debugging** (always available)
+
 ## Next Steps
 
 1. **Create evaluation infrastructure** (this sprint)
 2. **Build golden datasets** for test projects (piggymetrics, etc.)
 3. **Implement first eval** (Dictionary Service)
-4. **Run baseline evaluation**
-5. **Iterate and improve**
+4. **Add to CI/CD pipeline** (catch regressions)
+5. **Set up scheduled runs** (monitor trends)
+6. **Iterate and improve**
 
 ## Benefits
 
-- **Quality Assurance**: Catch regressions early
-- **Continuous Improvement**: Measure impact of changes
-- **User Trust**: Demonstrate system quality
-- **Performance Tracking**: Monitor system improvements
-- **Research**: Understand what works and what doesn't
+- **Quality Assurance**: Catch regressions early (CI/CD)
+- **Continuous Improvement**: Measure impact of changes (scheduled)
+- **User Trust**: Demonstrate system quality (dashboards)
+- **Performance Tracking**: Monitor system improvements (trends)
+- **Research**: Understand what works and what doesn't (experiments)
+- **Zero Production Impact**: Evals don't affect user experience
