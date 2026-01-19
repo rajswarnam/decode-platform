@@ -64,7 +64,7 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-vector-store-qdrant</artifactId>
-            <version>${spring-ai.version}</version>
+            <version>1.0.0</version>
             <exclusions>
                 <exclusion>
                     <groupId>ai.djl.pytorch</groupId>

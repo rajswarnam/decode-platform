@@ -4,6 +4,7 @@ spring:
   autoconfigure:
     exclude:
       - org.springframework.ai.autoconfigure.chat.client.observation.ChatClientObservationAutoConfiguration
+      - org.springframework.ai.autoconfigure.vectorstore.qdrant.QdrantVectorStoreAutoConfiguration
   datasource:
     url: jdbc:postgresql://postgres:5432/decode
     username: ${SPRING_DATASOURCE_USERNAME:decode_user}
