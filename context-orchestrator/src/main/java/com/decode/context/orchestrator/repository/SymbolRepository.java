@@ -11,4 +11,6 @@ public interface SymbolRepository extends JpaRepository<Symbol, UUID> {
     List<Symbol> findBySourceFile_Project_Name(String projectName);
 
     List<Symbol> findTop10ByNameContainingIgnoreCaseAndSourceFile_Project_Name(String name, String projectName);
+
+    long countByAnalysisStatus(String analysisStatus);
 }

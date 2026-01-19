@@ -1,6 +1,9 @@
 spring:
   application:
     name: context-orchestrator
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.chat.client.ChatClientAutoConfiguration
   datasource:
     url: jdbc:postgresql://postgres:5432/decode
     username: ${SPRING_DATASOURCE_USERNAME:decode_user}
@@ -17,18 +20,26 @@ spring:
       api-key: dummy-key-for-gateway
       base-url: http://llm-gateway-service:8081
       chat:
+        enabled: true
         options:
           model: gpt-4o
+      client:
+        observation:
+          enabled: false
+      embedding:
+        enabled: false # Correctly disables OpenAI embedding bean
+    embedding:
+      transformer:
+        enabled: true # Triggers the local Transformer bean
+        onnx:
+          model-uri: file:/models/model.onnx
+          tokenizer-uri: file:/models/tokenizer.json
     vectorstore:
       qdrant:
         host: qdrant
         port: 6334
         collection-name: symbols
         initialize-schema: false
-    transformers:
-      onnx:
-        model-uri: file:/models/model.onnx
-        tokenizer-uri: file:/models/tokenizer.json
   http:
     client:
       read-timeout: 120s

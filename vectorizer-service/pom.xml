@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.1</version>
+        <version>3.5.3</version>
         <relativePath />
     </parent>
     <groupId>com.decode</groupId>
@@ -15,6 +15,7 @@
     <description>Decode service: vectorizer-service</description>
     <properties>
         <java.version>17</java.version>
+        <spring-ai.version>1.0.0</spring-ai.version>
     </properties>
     <dependencies>
         <dependency>
@@ -52,16 +53,41 @@
         <!-- Spring AI & MCP -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-mcp-server-spring-boot-starter</artifactId>
+            <artifactId>spring-ai-starter-mcp-server-webflux</artifactId>
+            <version>1.0.0</version>
         </dependency>
         <!-- Vector Store & Embeddings -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-qdrant-store-spring-boot-starter</artifactId>
+            <artifactId>spring-ai-starter-vector-store-qdrant</artifactId>
+            <version>${spring-ai.version}</version>
         </dependency>
+        <!-- Use local Transformers embeddings (ONNX) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-transformers-spring-boot-starter</artifactId>
+            <artifactId>spring-ai-starter-model-transformers</artifactId>
+            <version>${spring-ai.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>ai.djl.pytorch</groupId>
+                    <artifactId>pytorch-engine</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>ai.djl.pytorch</groupId>
+                    <artifactId>pytorch-native-auto</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.onnxruntime</groupId>
+            <artifactId>onnxruntime-engine</artifactId>
+            <version>0.34.0</version>
+        </dependency>
+        <dependency>
+            <groupId>ai.djl.onnxruntime</groupId>
+            <artifactId>onnxruntime-native-auto</artifactId>
+            <version>1.3.0</version>
+            <!-- Match the ONNX version for 2026 -->
         </dependency>
     </dependencies>
     <build>
@@ -70,24 +96,35 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
-    <repositories>
+    <distributionManagement>
         <repository>
-            <id>spring-milestones</id>
-            <name>Spring Milestones</name>
-            <url>https://repo.spring.io/milestone</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
+            <id>central</id>
+            <name>transaction-orchestration-svc-maven-release-local</name>
+            <url>https://artifactory.us.bank-dns.com:443/artifactory/branch-technology-maven-virtual</url>
         </repository>
-    </repositories>
+        <snapshotRepository>
+            <id>snapshots</id>
+            <name>transaction-orchestration-svc-maven-snapshot-local</name>
+            <url>https://artifactory.us.bank-dns.com:443/artifactory/branch-technology-maven-virtual</url>
+        </snapshotRepository>
+    </distributionManagement>
+    <!-- Removed Spring milestone repository to avoid TLS issues; GA versions resolve from Maven Central -->
     <dependencyManagement>
         <dependencies>
             <dependency>
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
-                <version>1.0.0-M6</version>
+                <version>${spring-ai.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

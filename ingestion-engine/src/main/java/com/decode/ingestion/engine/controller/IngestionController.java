@@ -20,6 +20,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.errors.GitAPIException;
 import com.decode.ingestion.engine.domain.Project;
 
 @RestController
@@ -121,34 +123,17 @@ public class IngestionController {
                 Files.createDirectories(tempRoot);
 
                 ingestionEventService.sendEvent("📥 Starting git clone from: " + gitUrl);
-                
-                ProcessBuilder builder = new ProcessBuilder();
-                builder.command("git", "clone", gitUrl, targetPath.toString());
-                builder.directory(tempRoot.toFile());
-                Process process = builder.start();
-
-                // Monitor git clone progress (read stderr for progress info)
-                java.util.concurrent.CompletableFuture.runAsync(() -> {
-                    try (java.io.BufferedReader reader = new java.io.BufferedReader(
-                            new java.io.InputStreamReader(process.getErrorStream()))) {
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            // Git clone outputs progress to stderr
-                            if (line.contains("Cloning") || line.contains("Receiving") || 
-                                line.contains("Resolving") || line.contains("Counting")) {
-                                ingestionEventService.sendEvent("📥 " + line);
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.debug("Error reading git clone output", e);
-                    }
-                });
-
-                int exitCode = process.waitFor();
-                if (exitCode != 0) {
-                    String error = new String(process.getErrorStream().readAllBytes());
-                    log.error("Git clone failed: {}", error);
-                    ingestionEventService.sendEvent("❌ Git clone failed: " + error);
+                try {
+                    // Use JGit to avoid relying on system 'git' binary
+                    Git.cloneRepository()
+                        .setURI(gitUrl)
+                        .setDirectory(targetPath.toFile())
+                        .setCloneAllBranches(true)
+                        .call()
+                        .close();
+                } catch (GitAPIException ge) {
+                    log.error("JGit clone failed: {}", ge.getMessage());
+                    ingestionEventService.sendEvent("❌ Git clone failed: " + ge.getMessage());
                     projectDiscoveryService.updateProjectStatus(repoName, "FAILED");
                     return;
                 }

@@ -119,7 +119,7 @@ public class AgentOrchestrator {
         int maxIterations = 4; // Initial → QA → Deep Dive → Cross-Validation
         int maxAllowedIterations = 8; // Hard cap to prevent infinite loops
         String qaReport = "";
-        boolean hasCriticalLowCoverage = false;
+        java.util.concurrent.atomic.AtomicBoolean hasCriticalLowCoverage = new java.util.concurrent.atomic.AtomicBoolean(false);
         
         for (int iteration = 1; iteration <= maxIterations; iteration++) {
             final int currentIter = iteration;
@@ -155,7 +155,7 @@ public class AgentOrchestrator {
             
             // DECISION POINT
             if (iteration < maxIterations) {
-                boolean needsRefinement = refineTasksBasedOnQA(plan, qaReport, iteration, executionPlan, progressConsumer, () -> hasCriticalLowCoverage = true);
+                boolean needsRefinement = refineTasksBasedOnQA(plan, qaReport, iteration, executionPlan, progressConsumer, () -> hasCriticalLowCoverage.set(true));
                 
                 // SPECIALIST SPAWNING: If critical gaps found, add new workers
                 if (iteration == 2 && qaReport.contains("❌")) {
@@ -163,7 +163,7 @@ public class AgentOrchestrator {
                 }
                 
                 // DYNAMIC ITERATION EXPANSION: If coverage is critically low, extend iterations
-                if (hasCriticalLowCoverage && maxIterations < maxAllowedIterations) {
+                if (hasCriticalLowCoverage.get() && maxIterations < maxAllowedIterations) {
                     maxIterations = Math.min(maxIterations + 2, maxAllowedIterations); // Add 2 more iterations
                     log.warn("⚠️ CRITICAL: Low coverage detected. Extending iterations from {} to {}", iteration + 1, maxIterations);
                     progressConsumer.accept("⚠️ Architect: Low coverage detected. Extending analysis to " + maxIterations + " iterations...");

@@ -12,6 +12,7 @@ spring:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
+
   ai:
     vectorstore:
       qdrant:
@@ -19,12 +20,16 @@ spring:
         port: 6334
         collection-name: symbols
         initialize-schema: true
+        check-compatibility: false
     transformers:
       onnx:
-        # Configuration for local ONNX execution
+        # Point to files mounted from infra/models to /models in container
         model-uri: file:/models/model.onnx
         tokenizer-uri: file:/models/tokenizer.json
-
+        enabled: true
+    model:
+      embedding: transformers
+          
 minio:
   endpoint: http://minio:9000
   access-key: minioadmin

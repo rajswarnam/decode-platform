@@ -411,46 +411,134 @@ public class InternalLlmClientService {
 
 **File**: `llm-gateway-service/src/main/java/com/decode/gateway/controller/LlmController.java`
 
-**Changes needed:**
+**Replace the entire class with this updated version:**
 
-1. **Remove** the `ChatClient.Builder` dependency:
-   ```java
-   // REMOVE THIS:
-   private final ChatClient.Builder chatClientBuilder;
-   ```
-
-2. **Add** the new service:
-   ```java
-   private final InternalLlmClientService internalLlmClientService;
-   ```
-
-3. **Update constructor**:
-   ```java
-   @RequiredArgsConstructor  // This will handle it, or update constructor manually
-   ```
-
-4. **Update the `completions` method**:
-   - Replace `chatClientBuilder.build().prompt(userMessage).stream()` calls
-   - Use `internalLlmClientService.streamCompletion(userMessage, model, stream)` instead
-   - Adjust response parsing based on your internal gateway's format
-
-**Example update** (conceptual - exact implementation depends on your internal gateway format):
+**Complete Updated LlmController Class:**
 
 ```java
-// OLD:
-return chatClientBuilder.build()
-    .prompt(userMessage)
-    .stream()
-    .chatResponse()
-    .map(response -> { ... });
+package com.decode.gateway.controller;
 
-// NEW:
-return internalLlmClientService.streamCompletion(
-    userMessage, 
-    request.getModel(), 
-    request.isStream()
-);
+import com.decode.gateway.dto.ChatRequest;
+import com.decode.gateway.service.TokenGovernor;
+import com.decode.gateway.service.InternalLlmClientService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/v1/chat")
+@RequiredArgsConstructor
+@Slf4j
+public class LlmController {
+
+    // REMOVED: private final ChatClient.Builder chatClientBuilder;
+    private final InternalLlmClientService internalLlmClientService;
+    private final TokenGovernor tokenGovernor;
+    private final ObjectMapper objectMapper;
+
+    @PostMapping(value = "/completions", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ServerSentEvent<String>> completions(@RequestBody ChatRequest request) {
+        log.info("Gateway streaming request: model={} stream={}", request.getModel(), request.isStream());
+
+        String userMessage = request.getMessages().stream()
+                .filter(m -> "user".equals(m.getRole()))
+                .map(ChatRequest.Message::getContent)
+                .reduce((first, second) -> second)
+                .orElse("");
+
+        tokenGovernor.acquireTokenBudget(userMessage);
+
+        if (request.isStream()) {
+            // ========== STREAMING PATH ==========
+            String requestId = "chatcmpl-" + UUID.randomUUID().toString();
+            long created = System.currentTimeMillis() / 1000;
+
+            // Call internal gateway - returns Flux<String> (content chunks)
+            return internalLlmClientService.streamCompletion(userMessage, request.getModel(), true)
+                    .map(content -> {
+                        try {
+                            // Transform content chunk to SSE format
+                            Map<String, Object> delta = new HashMap<>();
+                            delta.put("content", content != null ? content : "");
+
+                            Map<String, Object> choice = new HashMap<>();
+                            choice.put("index", 0);
+                            choice.put("delta", delta);
+                            choice.put("finish_reason", null);
+
+                            Map<String, Object> chunk = new HashMap<>();
+                            chunk.put("id", requestId);
+                            chunk.put("object", "chat.completion.chunk");
+                            chunk.put("created", created);
+                            chunk.put("model", request.getModel());
+                            chunk.put("choices", Collections.singletonList(choice));
+
+                            return ServerSentEvent
+                                    .builder(objectMapper.writeValueAsString(chunk))
+                                    .build();
+                        } catch (Exception e) {
+                            log.error("Error creating chunk", e);
+                            return ServerSentEvent.<String>builder()
+                                    .comment("error: " + e.getMessage()).build();
+                        }
+                    })
+                    .concatWith(Flux.just(ServerSentEvent.builder("[DONE]").build()));
+        } else {
+            // ========== NON-STREAMING PATH ==========
+            // Call internal gateway - returns Flux<String>, get first (only) result
+            String content = internalLlmClientService.streamCompletion(
+                    userMessage, 
+                    request.getModel(), 
+                    false
+            ).blockFirst(); // Get single result (non-streaming)
+            
+            try {
+                // Format complete response as SSE
+                Map<String, Object> message = new HashMap<>();
+                message.put("role", "assistant");
+                message.put("content", content != null ? content : "");
+
+                Map<String, Object> choice = new HashMap<>();
+                choice.put("index", 0);
+                choice.put("message", message);
+                choice.put("finish_reason", "stop");
+
+                Map<String, Object> result = new HashMap<>();
+                result.put("id", "chatcmpl-" + UUID.randomUUID());
+                result.put("object", "chat.completion");
+                result.put("created", System.currentTimeMillis() / 1000);
+                result.put("model", request.getModel());
+                result.put("choices", Collections.singletonList(choice));
+
+                return Flux.just(ServerSentEvent.builder(objectMapper.writeValueAsString(result))
+                        .build());
+            } catch (Exception e) {
+                log.error("Error processing non-streaming response", e);
+                return Flux.just(ServerSentEvent.<String>builder()
+                        .data("{\"error\": \"" + e.getMessage() + "\"}").build());
+            }
+        }
+    }
+}
 ```
+
+**Key Changes:**
+1. ❌ **REMOVED:** `private final ChatClient.Builder chatClientBuilder;`
+2. ✅ **ADDED:** `private final InternalLlmClientService internalLlmClientService;`
+3. ✅ **Streaming path (if block):** Replaced `chatClientBuilder.build().prompt().stream()` with `internalLlmClientService.streamCompletion(..., true).map(...)`
+4. ✅ **Non-streaming path (else block):** Replaced `chatClientBuilder.build().prompt().call()` with `internalLlmClientService.streamCompletion(..., false).blockFirst()`
+5. ✅ **KEPT:** All SSE formatting logic (both paths)
+
+**Note:** The `InternalLlmClientService.streamCompletion()` method should return `Flux<String>` (content text chunks), and this controller handles the SSE formatting transformation.
 
 ---
 

@@ -14,3 +14,19 @@ spring:
           options:
             deployment-name: ${AZURE_OPENAI_DEPLOYMENT} # Chat Specific
             temperature: 0.7
+azure:
+  ad:
+    tenant-id: ${AZURE_AD_TENANT_ID}
+    client-id: ${AZURE_AD_CLIENT_ID}
+    client-secret: ${AZURE_AD_CLIENT_SECRET}
+    scope: https://genaigateway-dev.usbank.com/.default  # Default scope, adjust if needed
+
+# Internal LLM Gateway
+internal:
+  llm:
+    gateway:
+      base-url: ${INTERNAL_LLM_GATEWAY_BASE_URL}  # e.g., https://internal-gateway.company.com/v1
+      model: ${INTERNAL_LLM_MODEL:gpt-4o}  # Default model name
+      query-params: ${INTERNAL_LLM_GATEWAY_QUERY_PARAMS:?api-version=2023-12-01-preview}
+    embeddings:
+      base-url: ${INTERNAL_EMBEDDINGS_BASE_URL}
