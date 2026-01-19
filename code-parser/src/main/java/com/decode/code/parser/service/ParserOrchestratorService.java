@@ -63,8 +63,8 @@ public class ParserOrchestratorService {
     }
 
     private void triggerVectorizer(Project project) {
-        int maxRetries = 3;
-        int retryDelayMs = 2000; // 2 seconds
+        int maxRetries = 5; // Increased retries for startup scenarios
+        int retryDelayMs = 3000; // 3 seconds between retries
         
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
@@ -80,7 +80,7 @@ public class ParserOrchestratorService {
                     log.warn("Vectorizer returned non-2xx status: {}", response.getStatusCode());
                 }
             } catch (org.springframework.web.client.ResourceAccessException e) {
-                // Connection refused or service not ready
+                // Connection refused or service not ready - common during startup
                 if (attempt < maxRetries) {
                     log.warn("Vectorizer service not ready (attempt {}/{}), retrying in {}ms: {}", 
                             attempt, maxRetries, retryDelayMs, e.getMessage());
@@ -92,8 +92,9 @@ public class ParserOrchestratorService {
                         break;
                     }
                 } else {
-                    log.error("Failed to trigger vectorizer after {} attempts: {}", maxRetries, e.getMessage());
-                    log.error("This means files were parsed but NOT vectorized. Manual trigger may be needed.");
+                    log.warn("Failed to trigger vectorizer after {} attempts: {}", maxRetries, e.getMessage());
+                    log.warn("Files were parsed but NOT vectorized. Vectorizer may still be starting up.");
+                    log.warn("You can manually trigger vectorization via API or it will be processed on next ingestion.");
                 }
             } catch (Exception e) {
                 log.error("Failed to trigger vectorizer (attempt {}/{}): {}", attempt, maxRetries, e.getMessage());
