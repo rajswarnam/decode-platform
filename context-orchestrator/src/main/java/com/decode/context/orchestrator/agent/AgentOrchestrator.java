@@ -898,16 +898,21 @@ public class AgentOrchestrator {
                 String[] parts = cleanedLine.split("\\|", 3);
                 if (parts.length == 3) {
                     try {
+                        // Strip markdown formatting (**) from persona name
+                        String personaName = parts[0].trim()
+                            .replaceAll("^\\*+", "")  // Remove leading asterisks
+                            .replaceAll("\\*+$", ""); // Remove trailing asterisks
+                        
                         tasks.add(WorkerTask.builder()
                             .taskId(UUID.randomUUID().toString())
-                            .persona(WorkerPersona.valueOf(parts[0].trim()))
+                            .persona(WorkerPersona.valueOf(personaName))
                             .focusArea(parts[1].trim())
                             .specificQuestion(parts[2].trim())
                             .status("PENDING")
                             .attemptCount(0)
                             .build());
                     } catch (IllegalArgumentException e) {
-                        log.warn("Invalid persona in plan: {}", parts[0]);
+                        log.warn("Invalid persona in plan: {} (after stripping markdown: {})", parts[0], parts[0].trim().replaceAll("^\\*+|\\*+$", ""));
                     }
                 }
             }
