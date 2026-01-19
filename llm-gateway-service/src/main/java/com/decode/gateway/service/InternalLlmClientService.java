@@ -121,11 +121,23 @@ public class InternalLlmClientService {
                                 if (line.startsWith("data:")) {
                                     String data = line.substring(5).trim();
                                     if (!data.isEmpty() && !"[DONE]".equals(data)) {
-                                        // Validate that data is valid JSON before sending
+                                        // Validate and transform the response
                                         try {
                                             ObjectMapper mapper = new ObjectMapper();
-                                            mapper.readTree(data);
-                                            sink.next(data);
+                                            Map<String, Object> chunk = mapper.readValue(data, Map.class);
+                                            
+                                            // LOG THE ACTUAL CHUNK FORMAT
+                                            log.info("=== RAW CHUNK FROM INTERNAL GATEWAY ===");
+                                            log.info("{}", data);
+                                            log.info("=======================================");
+                                            
+                                            // Transform if needed - ensure it has delta, not message
+                                            String transformedChunk = transformStreamingChunk(chunk);
+                                            log.info("=== TRANSFORMED CHUNK FOR SPRING AI ===");
+                                            log.info("{}", transformedChunk);
+                                            log.info("=======================================");
+                                            
+                                            sink.next(transformedChunk);
                                             hasContent = true;
                                         } catch (Exception e) {
                                             log.warn("Invalid JSON in streaming response: {}", data);
@@ -201,6 +213,39 @@ public class InternalLlmClientService {
                 + errorMessage.replace("\"", "\\\"").replace("\n", "\\n") 
                 + "\",\"role\":\"assistant\"},\"finish_reason\":null}]}";
         }
+    }
+
+    /**
+     * Transform streaming chunk from internal gateway format to OpenAI format.
+     * Azure OpenAI sometimes uses "message" even in streaming, but Spring AI expects "delta".
+     */
+    @SuppressWarnings("unchecked")
+    private String transformStreamingChunk(Map<String, Object> chunk) throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        
+        // Check if this chunk has choices with "message" instead of "delta"
+        List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
+        if (choices != null && !choices.isEmpty()) {
+            for (Map<String, Object> choice : choices) {
+                // If choice has "message", convert it to "delta"
+                if (choice.containsKey("message") && !choice.containsKey("delta")) {
+                    log.debug("Transforming 'message' field to 'delta' for Spring AI compatibility");
+                    Object message = choice.get("message");
+                    choice.put("delta", message);
+                    choice.remove("message");
+                }
+                
+                // Ensure delta has role if content is present
+                if (choice.containsKey("delta")) {
+                    Map<String, Object> delta = (Map<String, Object>) choice.get("delta");
+                    if (delta != null && delta.containsKey("content") && !delta.containsKey("role")) {
+                        delta.put("role", "assistant");
+                    }
+                }
+            }
+        }
+        
+        return mapper.writeValueAsString(chunk);
     }
 
     /**
