@@ -2,6 +2,13 @@ import axios from 'axios';
 
 const API_BASE = 'http://localhost:8082/api/v1';
 
+// Configure axios for large file uploads
+const axiosInstance = axios.create({
+    timeout: 600000, // 10 minutes for large ZIP files
+    maxContentLength: 500 * 1024 * 1024, // 500MB
+    maxBodyLength: 500 * 1024 * 1024, // 500MB
+});
+
 export interface ProjectMetrics {
     totalTrustScore: number;
     ambiguityCount: number;
@@ -43,7 +50,18 @@ export const api = {
     resolveAmbiguity: (mappingId: string, selectedSymbolId: string) =>
         axios.post(`${API_BASE}/explore/resolve-ambiguity`, { mappingId, selectedSymbolId }),
     ingestGit: (gitUrl: string, groupName?: string) => axios.post(`http://localhost:8083/api/v1/ingestion/git-clone?gitUrl=${gitUrl}${groupName ? `&groupName=${encodeURIComponent(groupName)}` : ''}`),
-    uploadZip: (formData: FormData) => axios.post(`http://localhost:8083/api/v1/ingestion/upload-zip`, formData),
+    // Use axiosInstance with extended timeout for large file uploads
+    uploadZip: (formData: FormData) => axiosInstance.post(`http://localhost:8083/api/v1/ingestion/upload-zip`, formData, {
+        headers: {
+            'Content-Type': 'multipart/form-data',
+        },
+        onUploadProgress: (progressEvent) => {
+            if (progressEvent.total) {
+                const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+                console.log(`Upload progress: ${percentCompleted}%`);
+            }
+        },
+    }),
     getIngestionStatus: () => axios.get<Project[]>(`http://localhost:8083/api/v1/ingestion/status`),
     ingestionStreamUrl: 'http://localhost:8083/api/v1/ingestion/stream',
     getLineage: (projectName: string) => axios.get(`${API_BASE}/explore/lineage/semantic?projectName=${encodeURIComponent(projectName)}`),

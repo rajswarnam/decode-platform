@@ -85,19 +85,27 @@ export const IngestionPortal = () => {
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files?.[0]) return;
+        const file = e.target.files[0];
+        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+        
         setStatus('loading');
+        setMessage(`Uploading ZIP file (${fileSizeMB} MB)... This may take a few minutes for large files.`);
+        
         const formData = new FormData();
-        formData.append('file', e.target.files[0]);
+        formData.append('file', file);
         if (groupName) formData.append('groupName', groupName);
 
         try {
-            await api.uploadZip(formData);
+            const response = await api.uploadZip(formData);
             setStatus('success');
-            setMessage('ZIP archive uploaded and projects registered.');
-            setTimeout(() => setStatus('idle'), 5000);
-        } catch (error) {
+            const message = response?.data?.message || 'ZIP archive uploaded and processing started.';
+            setMessage(`${message} Check the Ingestion Monitor tab for progress.`);
+            setTimeout(() => setStatus('idle'), 10000); // Longer timeout for user to read message
+        } catch (error: any) {
             setStatus('idle');
-            setMessage('Upload failed.');
+            const errorMessage = error?.response?.data?.message || error?.message || 'Upload failed. Please check the file and try again.';
+            setMessage(`Upload failed: ${errorMessage}`);
+            console.error('Upload error:', error);
         }
     };
 

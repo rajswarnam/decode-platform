@@ -3,6 +3,12 @@ spring:
     web-application-type: servlet
   application:
     name: ingestion-engine
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 500MB
+      max-request-size: 500MB
+      file-size-threshold: 10MB
   datasource:
     url: jdbc:postgresql://postgres:5432/decode
     username: ${SPRING_DATASOURCE_USERNAME:decode_user}
@@ -17,6 +23,10 @@ spring:
         jdbc:
           lob:
             non_contextual_creation: true
+
+server:
+  # Increase timeout for large file uploads
+  connection-timeout: 300000 # 5 minutes
 
 minio:
   endpoint: http://minio:9000

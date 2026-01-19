@@ -163,44 +163,108 @@ public class IngestionController {
     }
 
     @PostMapping("/upload-zip")
-    public ResponseEntity<String> uploadZip(@RequestParam("file") MultipartFile file, @RequestParam(required = false) String groupName) throws IOException {
-        log.info("📂 Received ZIP Upload: {}", file.getOriginalFilename());
+    public ResponseEntity<?> uploadZip(@RequestParam("file") MultipartFile file, @RequestParam(required = false) String groupName) {
+        if (file == null || file.isEmpty()) {
+            log.error("ZIP upload failed: No file provided");
+            return ResponseEntity.badRequest().body(Map.of("message", "No file provided"));
+        }
 
-        Path tempDir = Files.createTempDirectory("decode-upload-");
-        try {
-            try (ZipInputStream zis = new ZipInputStream(file.getInputStream())) {
-                ZipEntry entry;
-                while ((entry = zis.getNextEntry()) != null) {
-                    File newFile = new File(tempDir.toFile(), entry.getName());
-                    if (entry.isDirectory()) {
-                        newFile.mkdirs();
-                    } else {
-                        newFile.getParentFile().mkdirs();
-                        try (FileOutputStream fos = new FileOutputStream(newFile)) {
-                            byte[] buffer = new byte[1024];
-                            int len;
-                            while ((len = zis.read(buffer)) > 0) {
-                                fos.write(buffer, 0, len);
+        String originalFilename = file.getOriginalFilename();
+        long fileSizeMB = file.getSize() / (1024 * 1024);
+        log.info("📂 Received ZIP Upload: {} (size: {} MB / {} bytes)", originalFilename, fileSizeMB, file.getSize());
+
+        String displayProjectName = (originalFilename != null && originalFilename.contains("."))
+                ? originalFilename.substring(0, originalFilename.lastIndexOf('.'))
+                : "Manual Upload";
+
+        // Pre-register project so it shows in UI immediately
+        projectDiscoveryService.registerPendingProject(displayProjectName, "manual-upload", "/tmp", groupName);
+        projectDiscoveryService.updateProjectStatus(displayProjectName, "IN_PROGRESS");
+        ingestionEventService.sendEvent("📦 Starting ZIP upload processing: " + displayProjectName + " (" + fileSizeMB + " MB)");
+
+        // Process ZIP extraction asynchronously to avoid blocking
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            Path tempDir = null;
+            try {
+                tempDir = Files.createTempDirectory("decode-upload-");
+                log.debug("Created temp directory: {}", tempDir);
+                ingestionEventService.sendEvent("📂 Extracting ZIP archive...");
+
+                // Extract ZIP file with progress reporting for large files
+                int fileCount = 0;
+                long totalBytesExtracted = 0;
+                try (ZipInputStream zis = new ZipInputStream(file.getInputStream())) {
+                    ZipEntry entry;
+                    byte[] buffer = new byte[8192]; // Larger buffer for better performance (8KB instead of 1KB)
+                    
+                    while ((entry = zis.getNextEntry()) != null) {
+                        // Security: Prevent zip slip vulnerability
+                        File newFile = new File(tempDir.toFile(), entry.getName());
+                        String canonicalPath = newFile.getCanonicalPath();
+                        String canonicalBase = tempDir.toFile().getCanonicalPath();
+                        if (!canonicalPath.startsWith(canonicalBase + File.separator)) {
+                            log.error("ZIP upload failed: Invalid entry path detected (zip slip attack): {}", entry.getName());
+                            ingestionEventService.sendEvent("❌ Security violation detected in ZIP file");
+                            projectDiscoveryService.updateProjectStatus(displayProjectName, "FAILED");
+                            return;
+                        }
+
+                        if (entry.isDirectory()) {
+                            newFile.mkdirs();
+                        } else {
+                            newFile.getParentFile().mkdirs();
+                            try (FileOutputStream fos = new FileOutputStream(newFile)) {
+                                int len;
+                                while ((len = zis.read(buffer)) > 0) {
+                                    fos.write(buffer, 0, len);
+                                    totalBytesExtracted += len;
+                                }
+                            }
+                            fileCount++;
+                            
+                            // Progress reporting for large uploads (every 10000 files or 50MB)
+                            if (fileCount % 10000 == 0 || totalBytesExtracted % (50 * 1024 * 1024) == 0) {
+                                long extractedMB = totalBytesExtracted / (1024 * 1024);
+                                ingestionEventService.sendEvent(
+                                    String.format("📂 Extracted %d files (%.1f MB)...", fileCount, extractedMB)
+                                );
                             }
                         }
                     }
                 }
+                
+                long finalExtractedMB = totalBytesExtracted / (1024 * 1024);
+                log.info("✅ Extracted {} files ({} MB) from ZIP", fileCount, finalExtractedMB);
+                ingestionEventService.sendEvent(
+                    String.format("✅ ZIP extraction complete: %d files (%.1f MB)", fileCount, finalExtractedMB)
+                );
+
+                ingestionEventService.sendEvent("🔍 Starting project discovery...");
+                projectDiscoveryService.discoverAndRegisterProjects(tempDir.toString(), "manual-upload", displayProjectName, groupName);
+                ingestionEventService.sendEvent("✅ Project registration complete: " + displayProjectName);
+                
+            } catch (IOException e) {
+                log.error("ZIP upload failed: Error extracting ZIP file", e);
+                ingestionEventService.sendEvent("❌ ZIP extraction failed: " + e.getMessage());
+                projectDiscoveryService.updateProjectStatus(displayProjectName, "FAILED");
+            } catch (Exception e) {
+                log.error("ZIP upload failed: Unexpected error", e);
+                ingestionEventService.sendEvent("❌ Upload failed: " + e.getMessage());
+                projectDiscoveryService.updateProjectStatus(displayProjectName, "FAILED");
+            } finally {
+                // CLEANUP ZIP EXTRACT
+                if (tempDir != null) {
+                    log.debug("Cleaning up temp zip directory: {}", tempDir);
+                    deleteDirectoryRecursively(tempDir);
+                }
             }
+        });
 
-            String originalFilename = file.getOriginalFilename();
-            String displayProjectName = (originalFilename != null && originalFilename.contains("."))
-                    ? originalFilename.substring(0, originalFilename.lastIndexOf('.'))
-                    : "Manual Upload";
-
-            projectDiscoveryService.discoverAndRegisterProjects(tempDir.toString(), "manual-upload", displayProjectName, groupName);
-            
-            return ResponseEntity.ok("Zip archive processed and projects registered.");
-            
-        } finally {
-            // CLEANUP ZIP EXTRACT
-            log.info("Cleaning up temp zip directory: {}", tempDir);
-            deleteDirectoryRecursively(tempDir);
-        }
+        return ResponseEntity.accepted().body(Map.of(
+            "message", "ZIP upload accepted and processing started",
+            "projectName", displayProjectName,
+            "fileSizeMB", fileSizeMB
+        ));
     }
     
     // Check line 131 for where existing code starts again
