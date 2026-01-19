@@ -28,10 +28,13 @@ spring:
         observation:
           enabled: false
       embedding:
-        enabled: true # Enable OpenAI embeddings for query embedding (documents embedded by vectorizer-service)
+        enabled: false # Disable OpenAI embeddings - use local ONNX embeddings instead
     embedding:
       transformer:
-        enabled: false # Disable transformer embeddings - use OpenAI for query embedding
+        enabled: true # Enable local ONNX embeddings for query embedding
+        onnx:
+          model-uri: file:/models/model.onnx
+          tokenizer-uri: file:/models/tokenizer.json
     vectorstore:
       qdrant:
         host: qdrant

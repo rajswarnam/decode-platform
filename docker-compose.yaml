@@ -134,9 +134,9 @@ services:
       - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/decode
       - SPRING_DATASOURCE_USERNAME=decode_user
       - SPRING_DATASOURCE_PASSWORD=decode_password
-      - JAVA_TOOL_OPTIONS=-Ddjl.default_engine=OnnxRuntime
-      - SPRING_AI_EMBEDDING_TRANSFORMER_ONNX_ENABLED=true
-      - SPRING_AI_MODEL_EMBEDDING=transformers
+      - JAVA_TOOL_OPTIONS=-Djava.net.preferIPv4Stack=true -Ddjl.default_engine=OnnxRuntime -Ddjl.onnxruntime.num_threads=1
+      - OMP_NUM_THREADS=1
+      - MKL_NUM_THREADS=1
       - SPRING_CONFIG_LOCATION=classpath:/application.yaml
     volumes:
       - ./infra/models:/models
