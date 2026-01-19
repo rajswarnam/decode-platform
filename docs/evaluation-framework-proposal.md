@@ -99,15 +99,18 @@ This document outlines a comprehensive evaluation framework for measuring and im
 - Compare parsed symbols vs expected symbols
 - Validate relationships (inheritance, calls, etc.)
 
-### 4. Semantic Analysis Evals (Worker Reports)
+### 4. Semantic Analysis Evals (Worker Reports) ⚠️ **Catches LLM Drift**
 
 **Purpose**: Measure quality of worker reports and synthesis
+
+**Why Critical**: This eval specifically catches LLM response quality changes
 
 **Metrics**:
 - **Relevance Score**: How relevant is the analysis to the query?
 - **Completeness Score**: Does it cover all important aspects?
 - **Accuracy Score**: Are the technical details correct?
 - **Clarity Score**: Is the explanation clear and understandable?
+- **Consistency Score**: Same query → similar quality? (detects variance)
 
 **Test Cases**:
 ```java
@@ -115,7 +118,8 @@ This document outlines a comprehensive evaluation framework for measuring and im
   "query": "What are the business use cases for this project?",
   "expectedTopics": ["User Management", "Payment Processing"],
   "minRelevanceScore": 0.8,
-  "minCompletenessScore": 0.7
+  "minCompletenessScore": 0.7,
+  "consistencyCheck": true  // Run same query multiple times, check variance
 }
 ```
 
@@ -123,16 +127,31 @@ This document outlines a comprehensive evaluation framework for measuring and im
 - Create `SemanticAnalysisEvalService`
 - Use LLM-as-judge for scoring (GPT-4, Claude, etc.)
 - Evaluate against golden queries and expected outputs
+- **Run same queries multiple times** to detect variance/consistency issues
+- **Track scores over time** to detect gradual degradation
 
-### 5. End-to-End Query Evals
+**Drift Detection**:
+```java
+// Run evaluation 3 times with same query, check variance
+List<Double> scores = evalService.runMultipleTimes(query, 3);
+double variance = calculateVariance(scores);
+if (variance > 0.1) {  // High variance = inconsistent responses
+    alert("High variance detected: LLM responses are inconsistent");
+}
+```
+
+### 5. End-to-End Query Evals ⚠️ **Catches Full Pipeline Drift**
 
 **Purpose**: Assess overall system quality from user's perspective
+
+**Why Critical**: Catches drift across the entire pipeline (retrieval + LLM)
 
 **Metrics**:
 - **Response Relevance**: How relevant is the answer?
 - **Response Accuracy**: Is the information correct?
 - **Response Completeness**: Does it fully answer the query?
 - **User Satisfaction**: Would a user find this helpful?
+- **Consistency**: Same query → similar response quality?
 
 **Test Cases**:
 ```java
@@ -143,7 +162,8 @@ This document outlines a comprehensive evaluation framework for measuring and im
     "JWT tokens",
     "AuthenticationService handles login"
   ],
-  "minRelevanceScore": 0.85
+  "minRelevanceScore": 0.85,
+  "runCount": 3  // Run multiple times to check consistency
 }
 ```
 
@@ -151,6 +171,24 @@ This document outlines a comprehensive evaluation framework for measuring and im
 - Create `QueryEvalService` for end-to-end evaluation
 - Use real user queries or synthetic queries
 - LLM-as-judge for scoring
+- **Run same queries multiple times** to detect variance
+- **Track scores over time** (trend analysis)
+- **Alert on degradation** (threshold-based alerts)
+
+**Drift Detection Example**:
+```java
+// Track score over time
+Map<String, List<ScoreHistory>> history = loadScoreHistory();
+for (String query : goldenQueries) {
+    double currentScore = evaluateQuery(query);
+    double previousScore = getLastScore(history, query);
+    
+    if (currentScore < previousScore - 0.1) {  // 10% degradation
+        alert("Query quality degraded: " + query + 
+              " (Previous: " + previousScore + ", Current: " + currentScore + ")");
+    }
+}
+```
 
 ## Implementation Strategy
 
@@ -449,16 +487,56 @@ eval:
     suite: "full"  # Run full suite
 ```
 
+## Why Evals Are Critical: Catching LLM Response Drift
+
+### The Problem: Non-Deterministic LLM Responses
+
+**Even without code changes, LLM responses can change** due to:
+1. **Model Version Updates**: `gpt-4o-2024-11-20` → `gpt-4o-2024-12-15` (different behavior)
+2. **Model Backend Changes**: Internal gateway updates, routing changes
+3. **Non-Deterministic Outputs**: Same input can produce different outputs (temperature > 0)
+4. **Prompt Drift**: Unintended prompt modifications
+5. **Service Behavior Changes**: Internal gateway configuration changes
+6. **Azure AD Token Issues**: Authentication changes affecting responses
+
+### How Evals Catch This
+
+**Evaluations detect quality degradation** even when:
+- ✅ No code changes were made
+- ✅ Same prompts are used
+- ✅ Same models are configured
+- ✅ Same queries are asked
+
+**Example Scenario**:
+```
+Day 1: Query "What are business use cases?" 
+       → Response: "User authentication, payment processing, account management" ✅
+       → Eval Score: 0.92 (Excellent)
+
+Day 30: Same query (no code changes)
+        → Response: "The application has features" ❌ (Vague, degraded)
+        → Eval Score: 0.58 (Failed threshold!)
+        → Alert: LLM response quality degraded!
+```
+
+### Scheduled Evals Catch Drift
+
+**Daily/Weekly scheduled evaluations** catch these issues:
+- **Model version changes** (detected immediately)
+- **Gradual quality degradation** (trends over time)
+- **Response consistency issues** (variance metrics)
+- **Backend service changes** (unexpected behavior changes)
+
 ## Recommended Evaluation Schedule
 
-| Evaluation Type | Frequency | Trigger | Scope |
-|----------------|-----------|---------|-------|
-| **Dictionary Service** | On PR, Daily | CI/CD, Cron | Full project |
-| **Vector Retrieval** | On PR, Daily | CI/CD, Cron | Golden queries |
-| **Symbol Parsing** | On PR, Weekly | CI/CD, Cron | Test projects |
-| **Semantic Analysis** | On PR, Weekly | CI/CD, Cron | Test queries |
-| **End-to-End Query** | On PR, Weekly | CI/CD, Cron | Full suite |
-| **Production Sampling** | Optional | Async, 1-5% | Real queries only |
+| Evaluation Type | Frequency | Trigger | Scope | Catches |
+|----------------|-----------|---------|-------|---------|
+| **Dictionary Service** | On PR, **Daily** | CI/CD, Cron | Full project | Model mapping changes |
+| **Vector Retrieval** | On PR, **Daily** | CI/CD, Cron | Golden queries | Embedding model changes |
+| **Symbol Parsing** | On PR, Weekly | CI/CD, Cron | Test projects | Parser stability |
+| **Semantic Analysis** | On PR, **Daily** | CI/CD, Cron | Test queries | **LLM response drift** ⚠️ |
+| **End-to-End Query** | On PR, **Daily** | CI/CD, Cron | Full suite | **Full pipeline drift** ⚠️ |
+| **Production Sampling** | Optional | Async, 1-5% | Real queries | Real-world drift |
 
 ## Cost & Performance Considerations
 
