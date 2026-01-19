@@ -29,9 +29,9 @@ public class LlmController {
     private final TokenGovernor tokenGovernor;
     private final ObjectMapper objectMapper;
 
-    // Streaming endpoint
+    // Dedicated streaming endpoint (alternative to /completions with stream=true)
     @PostMapping(value = "/completions/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<ServerSentEvent<String>> completionsStream(@RequestBody ChatRequest request) {
+    public ResponseEntity<SseEmitter> completionsStream(@RequestBody ChatRequest request) {
         log.info("Gateway streaming request: model={} stream={}", request.getModel(), request.isStream());
 
         String userMessage = request.getMessages().stream()
@@ -42,58 +42,42 @@ public class LlmController {
 
         tokenGovernor.acquireTokenBudget(userMessage);
 
+        SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
         String requestId = "chatcmpl-" + UUID.randomUUID().toString();
         long created = System.currentTimeMillis() / 1000;
 
-        // Call internal gateway - returns Flux<String> (content chunks)
-        return internalLlmClientService.streamCompletion(userMessage, request.getModel(), true)
-                .onErrorResume(error -> {
-                    log.error("Error in streaming completion", error);
-                    // Return error as a valid JSON chunk string instead of failing
-                    Map<String, Object> delta = new HashMap<>();
-                    delta.put("content", "Error: " + error.getMessage());
-
-                    Map<String, Object> choice = new HashMap<>();
-                    choice.put("index", 0);
-                    choice.put("delta", delta);
-                    choice.put("finish_reason", "stop");
-
-                    Map<String, Object> chunk = new HashMap<>();
-                    chunk.put("id", requestId);
-                    chunk.put("object", "chat.completion.chunk");
-                    chunk.put("created", created);
-                    chunk.put("model", request.getModel() != null ? request.getModel() : "gpt-4o");
-                    chunk.put("choices", Collections.singletonList(choice));
-
+        // Process streaming chunks asynchronously
+        internalLlmClientService.streamCompletion(userMessage, request.getModel(), true)
+                .doOnNext(chunk -> {
                     try {
-                        // Return Flux<String> (JSON string), not Flux<ServerSentEvent>
-                        return Flux.just(objectMapper.writeValueAsString(chunk));
+                        // Chunk is already JSON string from internal gateway
+                        emitter.send(SseEmitter.event()
+                                .data("data: " + chunk + "\n\n"));
                     } catch (Exception e) {
-                        log.error("Error creating error chunk", e);
-                        return Flux.just("{\"error\":\"" + error.getMessage().replace("\"", "\\\"") + "\"}");
+                        log.error("Error sending SSE chunk", e);
+                        emitter.completeWithError(e);
                     }
                 })
-                .map(content -> {
+                .doOnComplete(() -> {
                     try {
-                        // If content is already a JSON string (error chunk), parse and return as SSE
-                        if (content != null && content.trim().startsWith("{")) {
-                            try {
-                                // Try to parse as JSON to validate
-                                objectMapper.readTree(content);
-                                return ServerSentEvent.builder(content).build();
-                            } catch (Exception e) {
-                                // Not valid JSON, treat as plain content
-                            }
-                        }
-                        
-                        // Transform content chunk to SSE format
+                        emitter.send(SseEmitter.event()
+                                .data("data: [DONE]\n\n"));
+                        emitter.complete();
+                    } catch (Exception e) {
+                        log.error("Error completing SSE", e);
+                        emitter.completeWithError(e);
+                    }
+                })
+                .doOnError(error -> {
+                    log.error("Error in streaming completion", error);
+                    try {
                         Map<String, Object> delta = new HashMap<>();
-                        delta.put("content", content != null ? content : "");
+                        delta.put("content", "Error: " + error.getMessage());
 
                         Map<String, Object> choice = new HashMap<>();
                         choice.put("index", 0);
                         choice.put("delta", delta);
-                        choice.put("finish_reason", null);
+                        choice.put("finish_reason", "stop");
 
                         Map<String, Object> chunk = new HashMap<>();
                         chunk.put("id", requestId);
@@ -102,23 +86,21 @@ public class LlmController {
                         chunk.put("model", request.getModel() != null ? request.getModel() : "gpt-4o");
                         chunk.put("choices", Collections.singletonList(choice));
 
-                        return ServerSentEvent
-                                .builder(objectMapper.writeValueAsString(chunk))
-                                .build();
+                        emitter.send(SseEmitter.event()
+                                .data("data: " + objectMapper.writeValueAsString(chunk) + "\n\n"));
+                        emitter.send(SseEmitter.event()
+                                .data("data: [DONE]\n\n"));
+                        emitter.complete();
                     } catch (Exception e) {
-                        log.error("Error creating chunk", e);
-                        // Return error as valid SSE chunk
-                        Map<String, Object> errorChunk = new HashMap<>();
-                        errorChunk.put("error", e.getMessage());
-                        try {
-                            return ServerSentEvent.builder(objectMapper.writeValueAsString(errorChunk)).build();
-                        } catch (Exception ex) {
-                            return ServerSentEvent.<String>builder()
-                                    .comment("error: " + e.getMessage()).build();
-                        }
+                        log.error("Error sending error chunk", e);
+                        emitter.completeWithError(e);
                     }
                 })
-                .concatWith(Flux.just(ServerSentEvent.builder("data: [DONE]").build()));
+                .subscribe();
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.TEXT_EVENT_STREAM)
+                .body(emitter);
     }
 
     // Unified endpoint that handles both streaming and non-streaming
