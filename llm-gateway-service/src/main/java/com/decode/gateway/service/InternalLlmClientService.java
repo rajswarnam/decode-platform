@@ -72,6 +72,18 @@ public class InternalLlmClientService {
                 messages.add(userMsg);
                 requestBody.put("messages", messages);
 
+                // DEBUG: Print complete request for manual testing
+                ObjectMapper mapper = new ObjectMapper();
+                String requestBodyJson = mapper.writeValueAsString(requestBody);
+                log.info("=== STREAMING REQUEST TO INTERNAL GATEWAY ===");
+                log.info("URL: {}", endpoint);
+                log.info("Method: POST");
+                log.info("Headers:");
+                log.info("  Content-Type: {}", headers.getContentType());
+                log.info("  Authorization: Bearer {}", accessToken);
+                log.info("Body: {}", requestBodyJson);
+                log.info("==============================================");
+
                 HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
                 restTemplate.execute(
@@ -80,8 +92,8 @@ public class InternalLlmClientService {
                     req -> {
                         req.getHeaders().addAll(headers);
                         // Write request body
-                        ObjectMapper mapper = new ObjectMapper();
-                        byte[] json = mapper.writeValueAsBytes(requestBody);
+                        ObjectMapper jsonMapper = new ObjectMapper();
+                        byte[] json = jsonMapper.writeValueAsBytes(requestBody);
                         req.getBody().write(json);
                     },
                     response -> {
