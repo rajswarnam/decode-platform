@@ -32,13 +32,11 @@ spring:
     embedding:
       transformer:
         enabled: true # Enable local ONNX embeddings for query embedding
-        # Let Spring AI auto-download the model if not found locally
-        # It will cache to /tmp/spring-ai-onnx-generative/ by default
-        onnx:
-          model-uri: file:/models/model.onnx
-          tokenizer-uri: file:/models/tokenizer.json
-          # Fallback: If files don't exist, Spring AI will auto-download
-          # You can also use: jar:classpath:/models/model.onnx
+        # Let Spring AI auto-download the model - it will cache to /tmp/spring-ai-onnx-generative/
+        # Don't specify model-uri if local file is invalid - let it auto-download
+        # onnx:
+        #   model-uri: file:/models/model.onnx
+        #   tokenizer-uri: file:/models/tokenizer.json
     vectorstore:
       qdrant:
         host: qdrant
