@@ -31,10 +31,7 @@ spring:
         enabled: false # Correctly disables OpenAI embedding bean
     embedding:
       transformer:
-        enabled: true # Triggers the local Transformer bean
-        onnx:
-          model-uri: file:/models/model.onnx
-          tokenizer-uri: file:/models/tokenizer.json
+        enabled: false # Disable transformer embeddings - context-orchestrator doesn't need embeddings
     vectorstore:
       qdrant:
         host: qdrant
