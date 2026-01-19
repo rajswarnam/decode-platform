@@ -73,8 +73,8 @@ public class InternalLlmClientService {
                 requestBody.put("messages", messages);
 
                 // DEBUG: Print complete request for manual testing
-                ObjectMapper mapper = new ObjectMapper();
-                String requestBodyJson = mapper.writeValueAsString(requestBody);
+                ObjectMapper requestMapper = new ObjectMapper();
+                String requestBodyJson = requestMapper.writeValueAsString(requestBody);
                 log.info("=== STREAMING REQUEST TO INTERNAL GATEWAY ===");
                 log.info("URL: {}", endpoint);
                 log.info("Method: POST");
@@ -257,8 +257,8 @@ public class InternalLlmClientService {
                 requestBody.put("messages", messages);
 
                 // DEBUG: Print complete request for manual testing
-                ObjectMapper mapper = new ObjectMapper();
-                String requestBodyJson = mapper.writeValueAsString(requestBody);
+                ObjectMapper requestMapper = new ObjectMapper();
+                String requestBodyJson = requestMapper.writeValueAsString(requestBody);
                 log.info("=== NON-STREAMING REQUEST TO INTERNAL GATEWAY ===");
                 log.info("URL: {}", endpoint);
                 log.info("Method: POST");
