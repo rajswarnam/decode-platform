@@ -51,8 +51,9 @@ public class LlmController {
                 .doOnNext(chunk -> {
                     try {
                         // Chunk is already JSON string from internal gateway
+                        // SseEmitter.event().data() formats it as SSE automatically
                         emitter.send(SseEmitter.event()
-                                .data("data: " + chunk + "\n\n"));
+                                .data(chunk));
                     } catch (Exception e) {
                         log.error("Error sending SSE chunk", e);
                         emitter.completeWithError(e);
@@ -61,7 +62,7 @@ public class LlmController {
                 .doOnComplete(() -> {
                     try {
                         emitter.send(SseEmitter.event()
-                                .data("data: [DONE]\n\n"));
+                                .data("[DONE]"));
                         emitter.complete();
                     } catch (Exception e) {
                         log.error("Error completing SSE", e);
@@ -87,9 +88,9 @@ public class LlmController {
                         chunk.put("choices", Collections.singletonList(choice));
 
                         emitter.send(SseEmitter.event()
-                                .data("data: " + objectMapper.writeValueAsString(chunk) + "\n\n"));
+                                .data(objectMapper.writeValueAsString(chunk)));
                         emitter.send(SseEmitter.event()
-                                .data("data: [DONE]\n\n"));
+                                .data("[DONE]"));
                         emitter.complete();
                     } catch (Exception e) {
                         log.error("Error sending error chunk", e);
@@ -127,8 +128,9 @@ public class LlmController {
                     .doOnNext(chunk -> {
                         try {
                             // Chunk is already JSON string from internal gateway
+                            // SseEmitter.event().data() formats it as SSE automatically
                             emitter.send(SseEmitter.event()
-                                    .data("data: " + chunk + "\n\n"));
+                                    .data(chunk));
                         } catch (Exception e) {
                             log.error("Error sending SSE chunk", e);
                             emitter.completeWithError(e);
@@ -137,7 +139,7 @@ public class LlmController {
                     .doOnComplete(() -> {
                         try {
                             emitter.send(SseEmitter.event()
-                                    .data("data: [DONE]\n\n"));
+                                    .data("[DONE]"));
                             emitter.complete();
                         } catch (Exception e) {
                             log.error("Error completing SSE", e);
@@ -163,9 +165,9 @@ public class LlmController {
                             chunk.put("choices", Collections.singletonList(choice));
 
                             emitter.send(SseEmitter.event()
-                                    .data("data: " + objectMapper.writeValueAsString(chunk) + "\n\n"));
+                                    .data(objectMapper.writeValueAsString(chunk)));
                             emitter.send(SseEmitter.event()
-                                    .data("data: [DONE]\n\n"));
+                                    .data("[DONE]"));
                             emitter.complete();
                         } catch (Exception e) {
                             log.error("Error sending error chunk", e);
