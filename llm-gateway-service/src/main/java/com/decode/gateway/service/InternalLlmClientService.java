@@ -288,7 +288,9 @@ public class InternalLlmClientService {
                 }
             } catch (Exception e) {
                 log.error("Error calling internal LLM gateway (non-streaming)", e);
-                sink.error(e);
+                // Return error message instead of erroring the Flux
+                sink.next("Error: " + e.getMessage());
+                sink.complete();
             }
         });
     }
