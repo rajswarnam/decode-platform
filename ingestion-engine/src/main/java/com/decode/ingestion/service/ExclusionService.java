@@ -130,14 +130,30 @@ public class ExclusionService {
                 return true;
             }
 
-            // 9. Whitelist Check (Allowed Extensions)
-            if (!ALLOWED_EXTENSIONS.contains(extension) && !extension.isEmpty()) {
-                log.info("Excluded (Unknown Extension): {}", filePath);
-                return true;
+            // 9. Unknown Extension Check (Permissive: Only exclude if explicitly in exclusion lists)
+            // Changed from whitelist to blacklist approach:
+            // - If extension is in ALLOWED_EXTENSIONS → Process (fast path)
+            // - If extension is empty → Check MIME type (already done above)
+            // - If extension is unknown but not in any exclusion list → Process (permissive)
+            // - Only exclude if explicitly in BINARY, MEDIA, DATA, ARCHIVE, or TEMP lists
+            
+            // Fast path: Known good extensions
+            if (ALLOWED_EXTENSIONS.contains(extension)) {
+                // File is safe to process
+                return false;
             }
-
-            // File is safe to process
-            return false;
+            
+            // Extensionless files: Already checked MIME type above
+            if (extension.isEmpty()) {
+                // If we got here, MIME type check passed, so it's safe
+                return false;
+            }
+            
+            // Unknown extension: Be permissive - only exclude if it's explicitly in exclusion lists
+            // (We already checked BINARY, MEDIA, DATA, ARCHIVE, TEMP above)
+            // If it's not in any exclusion list, allow it through
+            log.debug("Allowing unknown extension '{}' for file: {} (not in exclusion lists)", extension, filePath);
+            return false; // Allow unknown extensions that aren't explicitly excluded
 
         } catch (IOException e) {
             log.error("Error checking file: {}", filePath, e);
