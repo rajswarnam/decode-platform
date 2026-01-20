@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 import reactor.core.publisher.Flux;
 
@@ -32,6 +33,12 @@ public class InternalLlmClientService {
 
     @Value("${internal.llm.gateway.model:gpt-4o}")
     private String defaultModel;
+
+    @Value("${llm.retry.max-attempts:3}")
+    private int maxRetryAttempts = 3;
+
+    @Value("${llm.retry.initial-delay-ms:1000}")
+    private long initialRetryDelayMs = 1000;
 
     /**
      * Call internal LLM gateway for streaming response.

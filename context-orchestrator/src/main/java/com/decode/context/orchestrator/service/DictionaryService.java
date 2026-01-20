@@ -138,8 +138,15 @@ public class DictionaryService {
                 """, domain, techName, symbol.getCategory());
 
         try {
-            // Direct call. Gateway handles TPM.
+            // Direct call. Gateway handles TPM and RPM.
             // Use non-streaming LLM call (single response)
+            // Add small delay between requests to prevent rapid-fire calls
+            try {
+                Thread.sleep(100); // 100ms delay between dictionary mapping requests
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                log.warn("Interrupted while waiting between dictionary requests");
+            }
             String response = chatClient.prompt(promptText).call().content();
             String[] parts = response.split("\\|");
             if (parts.length >= 3) {
@@ -187,7 +194,14 @@ public class DictionaryService {
                 """, domain, techName, symbol.getCategory());
 
         try {
-            // Direct call. Gateway handles TPM.
+            // Direct call. Gateway handles TPM and RPM.
+            // Add small delay between requests to prevent rapid-fire calls
+            try {
+                Thread.sleep(100); // 100ms delay between dictionary mapping requests
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                log.warn("Interrupted while waiting between dictionary requests");
+            }
             String response = chatClient.prompt(promptText).call().content();
 
             String[] parts = response.split("\\|");
