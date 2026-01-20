@@ -344,14 +344,10 @@ public class InternalLlmClientService {
 
                 HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
-                ResponseEntity<Map> response = restTemplate.exchange(
-                    endpoint,
-                    HttpMethod.POST,
-                    request,
-                    Map.class
-                );
+                // Retry logic for 429 errors with exponential backoff
+                ResponseEntity<Map> response = executeWithRetry(endpoint, request, Map.class);
 
-                if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                if (response != null && response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
                     // Extract content from response
                     Map<String, Object> body = response.getBody();
                     log.debug("Internal gateway response body: {}", body);
