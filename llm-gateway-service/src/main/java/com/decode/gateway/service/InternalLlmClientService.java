@@ -333,7 +333,7 @@ public class InternalLlmClientService {
                 List<Map<String, String>> messages = new ArrayList<>();
                 Map<String, String> userMsg = new HashMap<>();
                 userMsg.put("role", "user");
-                userMsg.put("content", userMessage);
+                userMsg.put("content", filteredMessage); // Use filtered message
                 messages.add(userMsg);
                 requestBody.put("messages", messages);
 
