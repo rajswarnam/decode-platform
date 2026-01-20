@@ -43,7 +43,33 @@ public class AclfParserService implements LanguageParser {
         List<ParsedSymbol> tags = new ArrayList<>();
 
         try {
-            String content = Files.readString(file.toPath());
+            // Try multiple encodings for ACLF files
+            String content;
+            try {
+                content = Files.readString(file.toPath(), java.nio.charset.StandardCharsets.UTF_8);
+            } catch (java.nio.charset.MalformedInputException e) {
+                log.warn("UTF-8 encoding failed for ACLF file {}, trying ISO-8859-1: {}", file.getName(), e.getMessage());
+                try {
+                    content = Files.readString(file.toPath(), java.nio.charset.StandardCharsets.ISO_8859_1);
+                } catch (java.nio.charset.MalformedInputException e2) {
+                    log.warn("ISO-8859-1 encoding also failed, trying Windows-1252: {}", e2.getMessage());
+                    content = Files.readString(file.toPath(), java.nio.charset.Charset.forName("Windows-1252"));
+                }
+            }
+            
+            // Check if content looks like XML (starts with <) or is empty
+            String trimmedContent = content.trim();
+            if (trimmedContent.isEmpty()) {
+                log.warn("ACLF file {} is empty, skipping", file.getName());
+                return tags;
+            }
+            
+            if (!trimmedContent.startsWith("<")) {
+                log.warn("ACLF file {} does not appear to be valid XML (does not start with '<'). First 100 chars: {}", 
+                        file.getName(), trimmedContent.substring(0, Math.min(100, trimmedContent.length())));
+                // Try to parse anyway - might be valid XML with leading whitespace or BOM
+            }
+            
             JsonNode root = xmlMapper.readTree(content);
 
             // Navigate to Detail nodes (assuming a standard structure)
@@ -51,8 +77,13 @@ public class AclfParserService implements LanguageParser {
             // or similar
             findAndProcessDetails(root, file, tags);
 
+        } catch (com.fasterxml.jackson.core.JsonParseException e) {
+            log.error("Failed to parse ACLF file as XML: {} - {}. File may not be valid XML or may have encoding issues.", 
+                    file.getAbsolutePath(), e.getMessage());
+            // Return empty list to allow other files to be processed
         } catch (Exception e) {
-            log.error("Failed to parse ACLF file: {}", file.getAbsolutePath(), e);
+            log.error("Failed to parse ACLF file: {} - {}", file.getAbsolutePath(), e.getMessage(), e);
+            // Return empty list to allow other files to be processed
         }
 
         return tags;

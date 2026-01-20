@@ -237,10 +237,16 @@ public class ParserOrchestratorService {
 
             for (LanguageParser parser : parsers) {
                 if (parser.supports(tempFile)) {
-                    List<ParsedSymbol> symbols = parser.parseFile(tempFile);
-                    List<ParsedRelationship> relationships = parser.extractRelationships(tempFile, symbols);
-                    saveResults(project, objectKey, tempFile.getName(), symbols, relationships);
-                    return !symbols.isEmpty();
+                    try {
+                        List<ParsedSymbol> symbols = parser.parseFile(tempFile);
+                        List<ParsedRelationship> relationships = parser.extractRelationships(tempFile, symbols);
+                        saveResults(project, objectKey, tempFile.getName(), symbols, relationships);
+                        return !symbols.isEmpty();
+                    } catch (Exception e) {
+                        log.error("Parser {} failed for file {}: {}", parser.getClass().getSimpleName(), objectKey, e.getMessage());
+                        // Continue to next parser or return false - don't crash entire parsing
+                        return false;
+                    }
                 }
             }
             

@@ -75,7 +75,25 @@ public class TypeScriptTreeSitterService implements LanguageParser {
         try {
             String sourceCode;
             if (file.exists()) {
-                sourceCode = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+                // Try multiple encodings to handle files with different character sets
+                try {
+                    sourceCode = Files.readString(file.toPath(), StandardCharsets.UTF_8);
+                } catch (java.nio.charset.MalformedInputException e) {
+                    log.warn("UTF-8 encoding failed for {}, trying ISO-8859-1: {}", file.getName(), e.getMessage());
+                    try {
+                        sourceCode = Files.readString(file.toPath(), java.nio.charset.StandardCharsets.ISO_8859_1);
+                        log.info("Successfully read file {} with ISO-8859-1 encoding", file.getName());
+                    } catch (java.nio.charset.MalformedInputException e2) {
+                        log.warn("ISO-8859-1 encoding also failed for {}, trying Windows-1252: {}", file.getName(), e2.getMessage());
+                        try {
+                            sourceCode = Files.readString(file.toPath(), java.nio.charset.Charset.forName("Windows-1252"));
+                            log.info("Successfully read file {} with Windows-1252 encoding", file.getName());
+                        } catch (Exception e3) {
+                            log.error("All encoding attempts failed for {}, skipping file: {}", file.getName(), e3.getMessage());
+                            return symbols; // Return empty list instead of throwing
+                        }
+                    }
+                }
             } else {
                 log.warn("Local file not found: {}", file.getName());
                 return symbols;
@@ -106,9 +124,10 @@ public class TypeScriptTreeSitterService implements LanguageParser {
             extractAngularDecorators(sourceCode, symbols, file);
 
             return symbols;
-        } catch (IOException e) {
-            log.error("Failed to read file", e);
-            throw new RuntimeException(e);
+        } catch (Exception e) {
+            log.error("Failed to parse TypeScript/JavaScript file: {} - {}", file.getName(), e.getMessage());
+            // Return empty list instead of throwing to allow other files to be processed
+            return symbols;
         }
     }
 
