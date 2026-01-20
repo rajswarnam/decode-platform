@@ -390,6 +390,46 @@ public class InternalLlmClientService {
     }
 
     /**
+     * Execute REST call with retry logic for 429 errors (exponential backoff).
+     */
+    private <T> ResponseEntity<T> executeWithRetry(String endpoint, HttpEntity<?> request, Class<T> responseType) {
+        int attempt = 0;
+        long delay = initialRetryDelayMs;
+        
+        while (attempt < maxRetryAttempts) {
+            try {
+                ResponseEntity<T> response = restTemplate.exchange(
+                    endpoint,
+                    HttpMethod.POST,
+                    request,
+                    responseType
+                );
+                return response;
+            } catch (HttpClientErrorException e) {
+                if (e.getStatusCode().value() == 429 && attempt < maxRetryAttempts - 1) {
+                    attempt++;
+                    log.warn("Rate limit (429) encountered. Retrying in {} ms (attempt {}/{})", 
+                            delay, attempt, maxRetryAttempts);
+                    try {
+                        Thread.sleep(delay);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Retry interrupted", ie);
+                    }
+                    // Exponential backoff: double the delay for next retry
+                    delay *= 2;
+                } else {
+                    // If not 429 or max retries reached, rethrow
+                    throw e;
+                }
+            }
+        }
+        
+        // Should never reach here, but handle just in case
+        throw new RuntimeException("Failed after " + maxRetryAttempts + " attempts");
+    }
+
+    /**
      * Extract content from internal LLM gateway response.
      * Adjust this method based on your internal gateway's response format.
      */
