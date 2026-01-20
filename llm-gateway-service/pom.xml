@@ -41,17 +41,7 @@
             <optional>true</optional>
         </dependency>
     </dependencies>
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.ai</groupId>
-                <artifactId>spring-ai-bom</artifactId>
-                <version>${spring-ai.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
+    <!-- Removed: Spring AI BOM - no longer using Spring AI dependencies -->
     <build>
         <plugins>
             <plugin>
