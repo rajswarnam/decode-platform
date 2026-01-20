@@ -9,6 +9,7 @@ export const IngestionPortal = () => {
     const [status, setStatus] = useState<'idle' | 'loading' | 'success'>('idle');
     const [message, setMessage] = useState('');
     const [projects, setProjects] = useState<Project[]>([]);
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
     const [ingestionMessages, setIngestionMessages] = useState<string[]>([]);
 
@@ -83,16 +84,37 @@ export const IngestionPortal = () => {
         }
     };
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files?.[0]) return;
-        const file = e.target.files[0];
-        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(1);
+        setSelectedFile(e.target.files[0]);
+        // Don't upload yet - wait for user to click "Begin Analysis"
+    };
+
+    const handleFileDrop = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        const file = e.dataTransfer.files[0];
+        if (file && file.name.endsWith('.zip')) {
+            setSelectedFile(file);
+        }
+    };
+
+    const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+    };
+
+    const handleFileUpload = async () => {
+        if (!selectedFile) return;
+        
+        const fileSizeMB = (selectedFile.size / (1024 * 1024)).toFixed(1);
         
         setStatus('loading');
         setMessage(`Uploading ZIP file (${fileSizeMB} MB)... This may take a few minutes for large files.`);
         
         const formData = new FormData();
-        formData.append('file', file);
+        formData.append('file', selectedFile);
         if (groupName) formData.append('groupName', groupName);
 
         try {
@@ -100,6 +122,7 @@ export const IngestionPortal = () => {
             setStatus('success');
             const message = response?.data?.message || 'ZIP archive uploaded and processing started.';
             setMessage(`${message} Check the Ingestion Monitor tab for progress.`);
+            setSelectedFile(null); // Clear selected file after successful upload
             setTimeout(() => setStatus('idle'), 10000); // Longer timeout for user to read message
         } catch (error: any) {
             setStatus('idle');
@@ -272,26 +295,82 @@ export const IngestionPortal = () => {
                                 </div>
                             </div>
                         ) : (
-                            <div
-                                style={{
-                                    border: '2px dashed var(--border-light)',
-                                    borderRadius: '20px',
-                                    padding: '64px 32px',
-                                    textAlign: 'center',
-                                    background: 'rgba(255,255,255,0.02)',
-                                    cursor: 'pointer',
-                                    position: 'relative'
-                                }}
-                            >
-                                <input
-                                    type="file"
-                                    accept=".zip"
-                                    onChange={handleFileUpload}
-                                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
-                                />
-                                <Upload size={48} color="#64748b" style={{ marginBottom: '16px' }} />
-                                <div style={{ fontSize: '18px', fontWeight: 600, color: '#f8fafc' }}>Drop your project archive here</div>
-                                <div style={{ fontSize: '13px', color: '#64748b', marginTop: '8px' }}>We'll extract and auto-detect the tech stack</div>
+                            <div>
+                                {!selectedFile ? (
+                                    <div
+                                        onDrop={handleFileDrop}
+                                        onDragOver={handleDragOver}
+                                        style={{
+                                            border: '2px dashed var(--border-light)',
+                                            borderRadius: '20px',
+                                            padding: '64px 32px',
+                                            textAlign: 'center',
+                                            background: 'rgba(255,255,255,0.02)',
+                                            cursor: 'pointer',
+                                            position: 'relative'
+                                        }}
+                                    >
+                                        <input
+                                            type="file"
+                                            accept=".zip"
+                                            onChange={handleFileSelect}
+                                            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
+                                        />
+                                        <Upload size={48} color="#64748b" style={{ marginBottom: '16px' }} />
+                                        <div style={{ fontSize: '18px', fontWeight: 600, color: '#f8fafc' }}>Drop your project archive here</div>
+                                        <div style={{ fontSize: '13px', color: '#64748b', marginTop: '8px' }}>We'll extract and auto-detect the tech stack</div>
+                                    </div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                        <div className="glass-panel" style={{ padding: '16px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                            <CheckCircle size={20} color="var(--primary)" />
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: 600, color: '#f8fafc' }}>{selectedFile.name}</div>
+                                                <div style={{ fontSize: '12px', color: '#64748b' }}>{(selectedFile.size / (1024 * 1024)).toFixed(1)} MB</div>
+                                            </div>
+                                            <button
+                                                onClick={() => setSelectedFile(null)}
+                                                style={{
+                                                    background: 'transparent',
+                                                    border: 'none',
+                                                    color: '#64748b',
+                                                    cursor: 'pointer',
+                                                    padding: '4px 8px'
+                                                }}
+                                            >
+                                                Change
+                                            </button>
+                                        </div>
+                                        <button
+                                            onClick={handleFileUpload}
+                                            disabled={status === 'loading'}
+                                            className="premium-button"
+                                            style={{
+                                                background: 'var(--primary)',
+                                                color: 'white',
+                                                border: 'none',
+                                                padding: '12px 32px',
+                                                borderRadius: '12px',
+                                                fontWeight: 600,
+                                                cursor: status === 'loading' ? 'not-allowed' : 'pointer',
+                                                opacity: status === 'loading' ? 0.6 : 1,
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                gap: '8px'
+                                            }}
+                                        >
+                                            {status === 'loading' ? (
+                                                <>
+                                                    <Loader2 className="animate-spin" size={20} />
+                                                    Uploading...
+                                                </>
+                                            ) : (
+                                                'Begin Analysis'
+                                            )}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
