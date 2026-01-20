@@ -1756,4 +1756,60 @@ public class AgentOrchestrator {
             return Intent.TECHNICAL;
         }
     }
+
+    /**
+     * Generate tech stack guidance for Architect to select appropriate workers
+     */
+    private String generateTechStackGuidance(List<String> techStack) {
+        if (techStack == null || techStack.isEmpty()) {
+            return """
+                **TECH STACK**: Unknown - Use default workers (BACKEND_JAVA, FRONTEND_REACT, DATABASE_SQL, LOGIC_EXTRACTOR).
+                """;
+        }
+        
+        StringBuilder guidance = new StringBuilder();
+        guidance.append("**PROJECT TECH STACK**: ").append(String.join(", ", techStack)).append("\n\n");
+        guidance.append("**WORKER SELECTION RULES**:\n");
+        
+        boolean hasJava = techStack.stream().anyMatch(t -> t.toLowerCase().contains("java") || t.toLowerCase().contains("maven") || t.toLowerCase().contains("gradle"));
+        boolean hasC = techStack.stream().anyMatch(t -> t.toLowerCase().contains("c/c++") || t.toLowerCase().contains("c++") || t.toLowerCase().contains(" c "));
+        boolean hasAspNet = techStack.stream().anyMatch(t -> t.toLowerCase().contains("asp.net") || t.toLowerCase().contains("aspnet") || t.toLowerCase().contains("aspx"));
+        boolean hasAclf = techStack.stream().anyMatch(t -> t.toLowerCase().contains("aclf"));
+        boolean hasReact = techStack.stream().anyMatch(t -> t.toLowerCase().contains("react") || t.toLowerCase().contains("angular") || t.toLowerCase().contains("node"));
+        boolean hasHtml = techStack.stream().anyMatch(t -> t.toLowerCase().contains("html") || t.toLowerCase().contains("web"));
+        boolean hasCobol = techStack.stream().anyMatch(t -> t.toLowerCase().contains("cobol"));
+        boolean hasDatabase = true; // Always include database worker
+        
+        if (hasC) {
+            guidance.append("- **MUST INCLUDE**: BACKEND_C (for C/C++ source files: .c, .cpp, .h)\n");
+        }
+        if (hasAspNet) {
+            guidance.append("- **MUST INCLUDE**: BACKEND_ASPNET (for ASP.NET files: .aspx, .aspx.cs, .aspx.vb)\n");
+        }
+        if (hasAclf) {
+            guidance.append("- **MUST INCLUDE**: CONFIG_ACLF (for ACLF configuration files: .aclf)\n");
+        }
+        if (hasJava) {
+            guidance.append("- **CAN INCLUDE**: BACKEND_JAVA (for Java files: .java)\n");
+        }
+        if (hasReact) {
+            guidance.append("- **CAN INCLUDE**: FRONTEND_REACT (for React/Angular files: .tsx, .ts, .jsx, .js)\n");
+        }
+        if (hasHtml && !hasReact) {
+            guidance.append("- **CAN INCLUDE**: FRONTEND_HTML (for HTML files: .html, .htm)\n");
+        }
+        if (hasCobol) {
+            guidance.append("- **CAN INCLUDE**: LEGACY_COBOL (for COBOL files: .cbl, .cob, .cpy)\n");
+        }
+        if (hasDatabase) {
+            guidance.append("- **ALWAYS INCLUDE**: DATABASE_SQL (for database schema and data models)\n");
+        }
+        guidance.append("- **ALWAYS INCLUDE**: LOGIC_EXTRACTOR (for business logic and variable mapping)\n");
+        
+        guidance.append("\n**CRITICAL**: Only select workers that match the project's tech stack. ");
+        guidance.append("Do NOT select BACKEND_JAVA if the project has C/C++ or ASP.NET. ");
+        guidance.append("Do NOT select FRONTEND_REACT if the project only has HTML files.\n");
+        
+        return guidance.toString();
+    }
 }
