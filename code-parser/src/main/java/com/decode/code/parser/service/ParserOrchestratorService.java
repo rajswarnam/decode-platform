@@ -116,11 +116,23 @@ public class ParserOrchestratorService {
     
     /**
      * Check if vectorizer service is ready/healthy
-     * Tries to connect to health endpoint or trigger endpoint
+     * Tries to connect to status endpoint, health endpoint, or trigger endpoint
      */
     private boolean isVectorizerServiceReady() {
         try {
-            // Try health endpoint first (if available)
+            // Try status endpoint first (most reliable for vectorizer service)
+            String statusUrl = vectorizerUrl + "/status";
+            try {
+                ResponseEntity<String> statusResponse = restTemplate.getForEntity(statusUrl, String.class);
+                if (statusResponse.getStatusCode().is2xxSuccessful()) {
+                    log.debug("Vectorizer service status check passed");
+                    return true;
+                }
+            } catch (Exception e) {
+                log.debug("Status endpoint not available, trying health endpoint: {}", e.getMessage());
+            }
+            
+            // Try health endpoint (if actuator is enabled)
             String healthUrl = vectorizerUrl.replace("/api/vectorizer", "") + "/actuator/health";
             try {
                 ResponseEntity<String> healthResponse = restTemplate.getForEntity(healthUrl, String.class);
@@ -129,17 +141,25 @@ public class ParserOrchestratorService {
                     return true;
                 }
             } catch (Exception e) {
-                log.debug("Health endpoint not available, trying direct connection");
+                log.debug("Health endpoint not available, trying direct connection: {}", e.getMessage());
             }
             
-            // Fallback: Try a simple GET to the base URL
-            String baseUrl = vectorizerUrl.replace("/api/vectorizer", "");
+            // Fallback: Try a simple GET to the trigger endpoint (will fail gracefully if not ready)
+            // We don't actually trigger, just check if service responds
+            String triggerUrl = vectorizerUrl + "/trigger";
             try {
-                restTemplate.getForEntity(baseUrl, String.class);
+                // Use HEAD or GET with small timeout to check if service is up
+                restTemplate.getForEntity(triggerUrl + "?projectId=" + java.util.UUID.randomUUID(), String.class);
                 return true;
-            } catch (Exception e) {
-                log.debug("Vectorizer service not reachable: {}", e.getMessage());
+            } catch (org.springframework.web.client.ResourceAccessException e) {
+                // Connection refused or timeout - service not ready
+                log.debug("Vectorizer service not reachable (connection refused): {}", e.getMessage());
                 return false;
+            } catch (Exception e) {
+                // Other exceptions (like 400 Bad Request) mean service is up, just wrong params
+                // This is actually a good sign - service is responding
+                log.debug("Vectorizer service is reachable (error: {}), considering it ready", e.getMessage());
+                return true;
             }
         } catch (Exception e) {
             log.debug("Error checking vectorizer service readiness: {}", e.getMessage());
