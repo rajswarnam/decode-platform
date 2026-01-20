@@ -83,6 +83,12 @@ The platform consists of **8 core services**:
 - **BUSINESS**: Features, workflows, "How does it work", overviews
 - **TECHNICAL**: Bugs, errors, performance, SRE, refactoring
 
+**Dynamic Worker Selection**:
+- Workers selected based on **project tech stack** (detected from source files)
+- **BUSINESS queries**: Prioritize LOGIC_EXTRACTOR and DATABASE_SQL
+- **TECHNICAL queries**: Use specialized workers based on detected technologies
+- **Tech Stack Detection**: Automatically detects C/C++, ASP.NET, ACLF, Angular, COBOL, Java, React from source files
+
 **Output**: Execution plan with worker tasks
 
 ---
@@ -204,10 +210,16 @@ ClassDeclaration (OrderService)
 5. **Generate embeddings** for semantic search
 
 **Supported Languages**:
-- **Java**: `tree-sitter-java`
-- **C**: `tree-sitter-c`
-- **TypeScript/JavaScript**: `tree-sitter-javascript`
-- **COBOL**: Regex-based (PoC)
+- **Java**: `tree-sitter-java` (Tree-sitter)
+- **C/C++**: `tree-sitter-c` (Tree-sitter)
+- **TypeScript/JavaScript**: Regex-based (multi-encoding support)
+- **COBOL**: Regex-based (`.cbl`, `.cob`, `.cpy`)
+- **ASP.NET**: `.aspx`, `.aspx.cs`, `.aspx.vb`, `.cs`, `.vb`
+- **ACLF**: XML and DSL format parsing (ExternalDatalist, Datafield, Transaction, FormBlock, FormReport, Calculation)
+- **Angular**: `.ts`, `.tsx`, `.js`, `.jsx` (detected via `angular.json`)
+- **HTML/XML**: General web content
+
+**Encoding Support**: UTF-8, ISO-8859-1, Windows-1252 (handles legacy files)
 
 **Benefits**:
 - Accurate symbol extraction (not regex-based)
@@ -586,12 +598,16 @@ Penalty for early iterations (less comprehensive):
 | **Total (with refinement)** | **45-60s** | **14-19** | - |
 | **Total (early termination)** | **20-30s** | **7** | - |
 
-### Rate Limiting
+### Rate Limiting & Token Governance
 
-- **TPM Limit**: 250,000 tokens/minute
-- **RPM Limit**: 3,000 requests/minute
-- **Pause Threshold**: 220,000 tokens (88% - proactive pause)
-- **Retry Logic**: Exponential backoff for 429 errors
+- **TPM Limit**: 250,000 tokens/minute (configurable, see TPM limit increase guide)
+- **RPM Limit**: 3,000 requests/minute with 200ms minimum delay
+- **Pause Threshold**: 220,000 tokens (88% - proactive pause to prevent 429 errors)
+- **Pause Duration**: Up to 60 seconds (full window reset)
+- **Progress Updates**: Keep-alive messages every 5 seconds during pauses
+- **HTTP Timeout**: 600s (10 minutes) to handle pauses + LLM calls
+- **Retry Logic**: Exponential backoff for 429/420 errors (3s, 6s, 12s delays, max 3 attempts)
+- **Data Privacy**: Filters sensitive data (Credit Card, SSN, ITIN, EIN, Bank Routing, Phone, IP) before LLM calls
 
 ### Optimization Impact
 
@@ -616,8 +632,10 @@ Penalty for early iterations (less comprehensive):
 - Configuration: `.xml`, `.yaml`, `.json`, `.properties`
 
 **Blacklist Approach**:
-- Unknown extensions are **allowed** unless explicitly excluded
-- Only excludes: binaries, media, data files, archives, temp files
+- Unknown extensions are **allowed** by default unless explicitly excluded
+- Only excludes: binaries, media, data files, archives, temp files, system files
+- **MIME Type Detection**: Large unknown extension files (>1MB) checked for text-based content
+- **Source Code Exemption**: Source code files (Java, C, ASP.NET, ACLF, etc.) exempt from 1MB size limit
 
 ### Exclusion Lists
 
@@ -646,7 +664,9 @@ Penalty for early iterations (less comprehensive):
 - `id`, `project_id`, `file_path`, `file_name`, `extension`, `storage_key`
 
 **`symbols`**: Extracted code symbols
-- `id`, `source_file_id`, `name`, `category`, `type`, `metadata`
+- `id`, `source_file_id`, `name`, `category`, `type`, `metadata`, `analysis_status`
+- **Duplicate Prevention**: Deterministic IDs prevent re-parsing on restart
+- **Vectorization Status**: Tracked via existence check in Qdrant (not separate column)
 
 **`global_dictionary`**: Business name mappings
 - `id`, `technical_name`, `business_name`, `standard_label`, `domain`, `description`
@@ -694,9 +714,11 @@ docker-compose up -d
 **A**: 5 specialized agents:
 1. Lexical Scout (domain discovery)
 2. Head Architect (planning)
-3. Worker Agents (5 personas, parallel execution)
+3. Worker Agents (9 personas, dynamic selection, parallel execution)
 4. QA Agent (quality assurance)
 5. Business Analyst (synthesis)
+
+**Worker Personas**: BACKEND_JAVA, FRONTEND_REACT, DATABASE_SQL, LOGIC_EXTRACTOR, LEGACY_COBOL, BACKEND_C, BACKEND_ASPNET, CONFIG_ACLF, FRONTEND_HTML
 
 ### Q: How many modules/services?
 **A**: 8 microservices:
