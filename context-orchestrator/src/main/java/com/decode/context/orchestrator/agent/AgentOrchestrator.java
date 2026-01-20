@@ -905,8 +905,15 @@ public class AgentOrchestrator {
             5. For BUSINESS queries, create tasks to DISCOVER business domains (Sales, HR, Marketing, Finance, etc.), not to fix technical issues.
             
             Create a Parallel Execution Plan. For BUSINESS queries, identify 5-8 distinct business domains to explore.
-            Assign the best Worker Persona (BACKEND_JAVA, FRONTEND_REACT, DATABASE_SQL, LEGACY_COBOL, LOGIC_EXTRACTOR).
+            
+            **DYNAMIC WORKER SELECTION BASED ON PROJECT TECH STACK**:
+            Available Worker Personas: BACKEND_JAVA, FRONTEND_REACT, DATABASE_SQL, LEGACY_COBOL, LOGIC_EXTRACTOR, 
+            BACKEND_C, BACKEND_ASPNET, CONFIG_ACLF, FRONTEND_HTML
+            
+            %s
+            
             For BUSINESS queries, prioritize LOGIC_EXTRACTOR and DATABASE_SQL to discover business domains.
+            Then select additional workers based on the project's actual tech stack (not assumptions).
             
             **VALIDATION**: Before creating a task, ask yourself: "Does this task help discover WHAT business domains the system supports, or does it analyze HOW the system is implemented technically?" Only create the former type of tasks.
             
@@ -914,7 +921,7 @@ public class AgentOrchestrator {
             Format pattern: PERSONA|FOCUS_AREA|SPECIFIC_QUESTION
             
             %s
-            """, query, context, intentGuidance, exampleTasks);
+            """, query, context, intentGuidance, generateTechStackGuidance(projectTechStack), exampleTasks);
 
         String response = blockingCall(prompt);
         
