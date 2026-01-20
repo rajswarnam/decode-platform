@@ -55,3 +55,10 @@ minio:
   accessKey: minioadmin
   secretKey: minioadmin
   bucket: decode-source-code
+
+# Dictionary configuration
+dictionary:
+  # Auto-populate dictionary on startup (default: false)
+  # Set to true if you want dictionary to run automatically on every startup
+  # Recommended: false - trigger dictionary population during ingestion instead
+  auto-populate-on-startup: false
