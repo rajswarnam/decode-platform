@@ -798,21 +798,29 @@ public class AgentOrchestrator {
                         }
                     }
                 });
-        } catch (InterruptedException e) {
-            // Thread was interrupted - restore interrupt status and return partial result
-            Thread.currentThread().interrupt();
-            log.warn("LLM call interrupted. Returning partial response ({} chars)", sb.length());
-            if (sb.length() > 0) {
-                return sb.toString() + "\n\n[Note: Response was interrupted but partial results are available]";
-            }
-            return "Error: LLM call was interrupted. Please try again.";
-        } catch (java.util.concurrent.TimeoutException e) {
-            log.error("LLM Call Timeout", e);
-            if (sb.length() > 0) {
-                return sb.toString() + "\n\n[Note: Response timed out but partial results are available]";
-            }
-            return "Error: LLM call timed out. The request took too long to complete.";
         } catch (Exception e) {
+            // Check if this is an interruption-related exception
+            if (e.getCause() instanceof InterruptedException || 
+                e.getMessage() != null && e.getMessage().contains("interrupted")) {
+                Thread.currentThread().interrupt();
+                log.warn("LLM call interrupted. Returning partial response ({} chars)", sb.length());
+                if (sb.length() > 0) {
+                    return sb.toString() + "\n\n[Note: Response was interrupted but partial results are available]";
+                }
+                return "Error: LLM call was interrupted. Please try again.";
+            }
+            
+            // Check if this is a timeout-related exception
+            if (e.getCause() instanceof java.util.concurrent.TimeoutException ||
+                e.getMessage() != null && (e.getMessage().contains("timeout") || e.getMessage().contains("timed out"))) {
+                log.error("LLM Call Timeout", e);
+                if (sb.length() > 0) {
+                    return sb.toString() + "\n\n[Note: Response timed out but partial results are available]";
+                }
+                return "Error: LLM call timed out. The request took too long to complete.";
+            }
+            
+            // Generic exception handling
             log.error("LLM Call Failed", e);
             if (sb.length() > 0) {
                 return sb.toString() + "\n\n[Note: Error occurred but partial results are available: " + e.getMessage() + "]";
