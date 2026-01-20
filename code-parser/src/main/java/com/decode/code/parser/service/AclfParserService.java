@@ -97,24 +97,37 @@ public class AclfParserService implements LanguageParser {
             findAndProcessDetails(root, file, tags);
 
         } catch (com.fasterxml.jackson.core.JsonParseException e) {
-            // This includes WstxUnexpectedCharException (from Woodstox XML parser)
+            // This includes WstxUnexpectedCharException (from Woodstox XML parser, wrapped by Jackson)
             String errorMsg = e.getMessage();
-            if (errorMsg != null && errorMsg.contains("Unexpected character")) {
-                log.error("ACLF file {} has invalid XML structure (unexpected character in prolog). " +
-                        "This usually means the file is not valid XML or starts with unexpected characters. " +
-                        "Error: {}. Skipping this file.", file.getAbsolutePath(), errorMsg);
+            String exceptionType = e.getClass().getSimpleName();
+            
+            // Check for WstxUnexpectedCharException or similar Woodstox errors
+            if (errorMsg != null && (errorMsg.contains("Unexpected character") || 
+                                     errorMsg.contains("in prolog") ||
+                                     exceptionType.contains("Wstx"))) {
+                log.error("ACLF file {} has invalid XML structure (WstxUnexpectedCharException). " +
+                        "File does not start with '<' or has unexpected characters in prolog. " +
+                        "This usually means the file is not valid XML. Error: {}. Skipping this file.", 
+                        file.getAbsolutePath(), errorMsg);
             } else {
                 log.error("Failed to parse ACLF file as XML: {} - {}. File may not be valid XML or may have encoding issues.", 
                         file.getAbsolutePath(), errorMsg);
             }
             // Return empty list to allow other files to be processed
-        } catch (com.ctc.wstx.exc.WstxUnexpectedCharException e) {
-            // Explicitly catch Woodstox exception (though it should be caught by JsonParseException above)
-            log.error("ACLF file {} caused WstxUnexpectedCharException: {}. " +
-                    "File does not appear to be valid XML. Skipping.", file.getAbsolutePath(), e.getMessage());
-            // Return empty list to allow other files to be processed
         } catch (Exception e) {
-            log.error("Failed to parse ACLF file: {} - {}", file.getAbsolutePath(), e.getMessage(), e);
+            // Catch any other exceptions (including WstxUnexpectedCharException if not wrapped)
+            String errorMsg = e.getMessage();
+            String exceptionType = e.getClass().getSimpleName();
+            
+            if (errorMsg != null && (errorMsg.contains("Unexpected character") || 
+                                     errorMsg.contains("in prolog") ||
+                                     exceptionType.contains("Wstx"))) {
+                log.error("ACLF file {} caused WstxUnexpectedCharException: {}. " +
+                        "File does not appear to be valid XML (doesn't start with '<'). Skipping.", 
+                        file.getAbsolutePath(), errorMsg);
+            } else {
+                log.error("Failed to parse ACLF file: {} - {}", file.getAbsolutePath(), errorMsg, e);
+            }
             // Return empty list to allow other files to be processed
         }
 
