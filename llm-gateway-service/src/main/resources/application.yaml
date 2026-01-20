@@ -5,7 +5,7 @@ spring:
   application:
     name: llm-gateway-service
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://postgres:5432/decode_db}
+    url: ${DATABASE_URL:jdbc:postgresql://postgres:5432/decode}
     username: ${DATABASE_USER:decode_user}
     password: ${DATABASE_PASSWORD:decode_password}
     driver-class-name: org.postgresql.Driver
