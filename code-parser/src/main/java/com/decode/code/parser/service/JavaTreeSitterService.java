@@ -283,8 +283,20 @@ public class JavaTreeSitterService implements LanguageParser {
 
     private String extractText(TSNode node, String source) {
         // Null check - handle null nodes gracefully
-        if (node == null || node.isNull()) {
-            log.debug("extractText called with null node");
+        if (node == null) {
+            log.debug("extractText called with null node reference");
+            return "Unknown";
+        }
+        
+        // Check if node is null (tree-sitter's isNull() method)
+        try {
+            if (node.isNull()) {
+                log.debug("extractText called with null node (isNull() returns true)");
+                return "Unknown";
+            }
+        } catch (Exception e) {
+            // If isNull() itself throws an exception, the node is likely invalid
+            log.debug("extractText: node.isNull() check failed: {}", e.getMessage());
             return "Unknown";
         }
         
@@ -292,16 +304,30 @@ public class JavaTreeSitterService implements LanguageParser {
             // Simplified extraction assuming no multi-byte characters messing up offsets
             // Ideally we use byte-level extraction, but String-level is okay for PoC on
             // ASCII
+            // Note: getStartByte() and getEndByte() may throw TSException if node is invalid
+            // even after isNull() check passes (edge case in tree-sitter)
             int start = node.getStartByte();
             int end = node.getEndByte();
-            if (start >= 0 && end <= source.length() && start < end) {
-                return source.substring(start, end);
+            
+            if (start >= 0 && end > start && end <= source.length()) {
+                String extracted = source.substring(start, end);
+                return extracted.trim(); // Trim whitespace
             }
             // Fallback using lines if byte offset fails due to encoding
             log.debug("extractText: invalid byte offsets (start: {}, end: {}, source length: {})", start, end, source.length());
             return "Unknown";
+        } catch (org.treesitter.TSException e) {
+            // TSException specifically for tree-sitter null node errors
+            // This can happen even after isNull() check passes (tree-sitter edge case)
+            log.debug("extractText: TSException (likely null/invalid node): {}", e.getMessage());
+            return "Unknown";
         } catch (Exception e) {
-            log.warn("extractText failed for node type {}: {}", node.getType(), e.getMessage());
+            // Catch any other exceptions
+            try {
+                log.debug("extractText failed for node type {}: {}", node.getType(), e.getMessage());
+            } catch (Exception logError) {
+                log.debug("extractText failed and couldn't log node type: {}", e.getMessage());
+            }
             return "Unknown";
         }
     }
