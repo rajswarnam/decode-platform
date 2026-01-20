@@ -4,6 +4,8 @@
 
 This document proposes a comprehensive memory system for Decode.AI agents, enabling both **short-term** (conversation context) and **long-term** (learned patterns, project knowledge) memory capabilities.
 
+**Note**: This architecture uses **PostgreSQL only** (no Redis required), with optimized indexes and scheduled cleanup for performance.
+
 ## Why Memory Matters
 
 ### Current Limitations
@@ -37,7 +39,7 @@ This document proposes a comprehensive memory system for Decode.AI agents, enabl
 │  │ • Recent queries and responses                   │  │
 │  │ • Active analysis plan state                     │  │
 │  │ • Temporary insights (current session)           │  │
-│  │ • Storage: In-memory + Redis (TTL: 24 hours)    │  │
+│  │ • Storage: PostgreSQL (TTL: 24 hours, auto-clean)│  │
 │  └──────────────────────────────────────────────────┘  │
 │                                                         │
 │  LONG-TERM MEMORY (Persistent)                         │
@@ -71,8 +73,11 @@ CREATE TABLE conversation_sessions (
     domain VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_activity_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP,  -- TTL: 24 hours
-    metadata JSONB  -- Flexible storage for session state
+    expires_at TIMESTAMP NOT NULL,  -- TTL: 24 hours
+    is_active BOOLEAN DEFAULT true,  -- For soft deletion
+    metadata JSONB,  -- Flexible storage for session state
+    INDEX idx_sessions_active (is_active, expires_at),  -- For cleanup queries
+    INDEX idx_sessions_project_domain (project_id, domain, is_active)  -- For lookups
 );
 
 CREATE TABLE conversation_messages (
@@ -93,8 +98,29 @@ CREATE TABLE session_insights (
     content TEXT,
     confidence_score DOUBLE PRECISION,
     source_query_id UUID REFERENCES conversation_messages(id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_session_insights (session_id, created_at)
 );
+
+-- Cleanup function for expired sessions (run via scheduled job)
+CREATE OR REPLACE FUNCTION cleanup_expired_sessions() RETURNS INTEGER AS $$
+DECLARE
+    deleted_count INTEGER;
+BEGIN
+    -- Mark expired sessions as inactive (soft delete)
+    UPDATE conversation_sessions 
+    SET is_active = false 
+    WHERE is_active = true 
+      AND expires_at < CURRENT_TIMESTAMP;
+    
+    GET DIAGNOSTICS deleted_count = ROW_COUNT;
+    RETURN deleted_count;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Create index for fast lookups (already added above, but ensure it exists)
+-- CREATE INDEX idx_sessions_active ON conversation_sessions(is_active, expires_at);
+-- CREATE INDEX idx_sessions_project_domain ON conversation_sessions(project_id, domain, is_active);
 ```
 
 ### Implementation
@@ -108,29 +134,33 @@ public class ShortTermMemoryService {
     private final ConversationSessionRepository sessionRepository;
     private final ConversationMessageRepository messageRepository;
     private final SessionInsightRepository insightRepository;
-    private final RedisTemplate<String, Object> redisTemplate;
     
-    private static final String SESSION_CACHE_PREFIX = "session:";
     private static final Duration SESSION_TTL = Duration.ofHours(24);
+    private static final Duration SESSION_REUSE_WINDOW = Duration.ofHours(1);  // Reuse session if active within 1 hour
     
     /**
      * Get or create session for user query
+     * Uses PostgreSQL with proper indexing for fast lookups
      */
     public ConversationSession getOrCreateSession(String projectId, String domain) {
-        // Check Redis cache first
-        String cacheKey = SESSION_CACHE_PREFIX + projectId + ":" + domain;
-        ConversationSession cached = (ConversationSession) redisTemplate.opsForValue().get(cacheKey);
-        if (cached != null && !cached.isExpired()) {
-            return cached;
-        }
+        // Clean up expired sessions first (async, non-blocking)
+        cleanupExpiredSessionsAsync();
         
-        // Check database for recent session (within 1 hour)
+        // Check database for recent active session (within reuse window)
         Optional<ConversationSession> recent = sessionRepository
-            .findRecentActiveSession(projectId, domain, Duration.ofHours(1));
+            .findRecentActiveSession(
+                UUID.fromString(projectId), 
+                domain, 
+                Instant.now().minus(SESSION_REUSE_WINDOW),
+                Instant.now().plus(Duration.ofMinutes(30))  // Still has 30+ min before expiry
+            );
         
         if (recent.isPresent()) {
-            cacheSession(recent.get());
-            return recent.get();
+            // Update last activity time
+            ConversationSession session = recent.get();
+            session.setLastActivityAt(Instant.now());
+            session.setExpiresAt(Instant.now().plus(SESSION_TTL));  // Extend expiry
+            return sessionRepository.save(session);
         }
         
         // Create new session
@@ -138,11 +168,27 @@ public class ShortTermMemoryService {
             .projectId(UUID.fromString(projectId))
             .domain(domain)
             .expiresAt(Instant.now().plus(SESSION_TTL))
+            .lastActivityAt(Instant.now())
+            .isActive(true)
             .build();
         
-        session = sessionRepository.save(session);
-        cacheSession(session);
-        return session;
+        return sessionRepository.save(session);
+    }
+    
+    /**
+     * Clean up expired sessions asynchronously
+     * Marks them as inactive instead of deleting (soft delete)
+     */
+    @Async
+    private void cleanupExpiredSessionsAsync() {
+        try {
+            int cleaned = sessionRepository.markExpiredSessionsInactive(Instant.now());
+            if (cleaned > 0) {
+                log.debug("Cleaned up {} expired sessions", cleaned);
+            }
+        } catch (Exception e) {
+            log.warn("Error cleaning up expired sessions", e);
+        }
     }
     
     /**
@@ -176,8 +222,17 @@ public class ShortTermMemoryService {
     
     /**
      * Get conversation history for context
+     * Only retrieves messages from active sessions
      */
     public List<ConversationMessage> getConversationHistory(String sessionId, int limit) {
+        // Verify session is still active
+        Optional<ConversationSession> session = sessionRepository.findById(UUID.fromString(sessionId));
+        if (session.isEmpty() || !session.get().isActive() || 
+            session.get().getExpiresAt().isBefore(Instant.now())) {
+            log.warn("Session {} is not active or expired", sessionId);
+            return Collections.emptyList();
+        }
+        
         return messageRepository.findBySessionIdOrderByCreatedAtDesc(
             UUID.fromString(sessionId), limit);
     }
@@ -485,11 +540,12 @@ public String executeSwarm(String userQuery, String projectContext, String domai
 ## Implementation Phases
 
 ### Phase 1: Short-Term Memory (Week 1-2)
-1. Create database tables
-2. Implement `ShortTermMemoryService`
-3. Integrate with `AgentOrchestrator`
-4. Add Redis caching
+1. Create database tables with proper indexes
+2. Implement `ShortTermMemoryService` (PostgreSQL only)
+3. Add session cleanup job (scheduled task)
+4. Integrate with `AgentOrchestrator`
 5. Enable follow-up questions
+6. Performance optimization with indexes
 
 ### Phase 2: Long-Term Memory - Patterns (Week 3-4)
 1. Create `learned_patterns` table
