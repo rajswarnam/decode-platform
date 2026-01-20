@@ -222,4 +222,95 @@ public class AclfParserService implements LanguageParser {
             mapping.setConfidenceScore(0.0);
         }
     }
+
+    /**
+     * Parse DSL-format ACLF files (non-XML format)
+     * DSL format contains: ExternalDatalist, Datafield, Transaction definitions
+     */
+    private void parseDslFormat(String content, File file, List<ParsedSymbol> tags) {
+        log.info("Parsing DSL-format ACLF file: {}", file.getName());
+        
+        // Pattern 1: ExternalDatalist definitions
+        // Example: ExternalDatalist A2AIMGO { ... }
+        java.util.regex.Pattern datalistPattern = java.util.regex.Pattern.compile(
+            "ExternalDatalist\\s+(\\w+)\\s*\\{", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher datalistMatcher = datalistPattern.matcher(content);
+        while (datalistMatcher.find()) {
+            String datalistName = datalistMatcher.group(1);
+            ParsedSymbol ps = new ParsedSymbol();
+            ps.setName(datalistName);
+            ps.setCategory("ACLF_EXTERNAL_DATALIST");
+            ps.setType("ExternalDatalist");
+            // Extract line number
+            int lineNumber = content.substring(0, datalistMatcher.start()).split("\n").length;
+            ps.setStartLine(lineNumber);
+            ps.setEndLine(lineNumber);
+            tags.add(ps);
+            log.debug("Found ExternalDatalist: {}", datalistName);
+        }
+        
+        // Pattern 2: Datafield definitions
+        // Example: Datafield _ABANUM { Type = DataType.Numeric; Length = 9; }
+        java.util.regex.Pattern datafieldPattern = java.util.regex.Pattern.compile(
+            "Datafield\\s+(\\w+)\\s*\\{[^}]*Type\\s*=\\s*([^;]+);[^}]*Length\\s*=\\s*(\\d+)", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL
+        );
+        java.util.regex.Matcher datafieldMatcher = datafieldPattern.matcher(content);
+        while (datafieldMatcher.find()) {
+            String fieldName = datafieldMatcher.group(1);
+            String fieldType = datafieldMatcher.group(2).trim();
+            String fieldLength = datafieldMatcher.group(3);
+            
+            ParsedSymbol ps = new ParsedSymbol();
+            ps.setName(fieldName);
+            ps.setCategory("ACLF_DATAFIELD");
+            ps.setType(fieldType + " (Length: " + fieldLength + ")");
+            int lineNumber = content.substring(0, datafieldMatcher.start()).split("\n").length;
+            ps.setStartLine(lineNumber);
+            ps.setEndLine(lineNumber);
+            tags.add(ps);
+            log.debug("Found Datafield: {} (Type: {}, Length: {})", fieldName, fieldType, fieldLength);
+        }
+        
+        // Pattern 3: Transaction definitions
+        // Example: Transaction HSUSAL2 { Execute() { ... } }
+        java.util.regex.Pattern transactionPattern = java.util.regex.Pattern.compile(
+            "Transaction\\s+(\\w+)\\s*\\{", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher transactionMatcher = transactionPattern.matcher(content);
+        while (transactionMatcher.find()) {
+            String transactionName = transactionMatcher.group(1);
+            ParsedSymbol ps = new ParsedSymbol();
+            ps.setName(transactionName);
+            ps.setCategory("ACLF_TRANSACTION");
+            ps.setType("Transaction");
+            int lineNumber = content.substring(0, transactionMatcher.start()).split("\n").length;
+            ps.setStartLine(lineNumber);
+            ps.setEndLine(lineNumber);
+            tags.add(ps);
+            log.debug("Found Transaction: {}", transactionName);
+            
+            // Try to extract transaction purpose from comments (if available)
+            // Look for comments before transaction definition
+            int transactionStart = transactionMatcher.start();
+            String beforeTransaction = content.substring(Math.max(0, transactionStart - 500), transactionStart);
+            java.util.regex.Pattern commentPattern = java.util.regex.Pattern.compile("//\\s*(.+?)\\n", java.util.regex.Pattern.MULTILINE);
+            java.util.regex.Matcher commentMatcher = commentPattern.matcher(beforeTransaction);
+            if (commentMatcher.find()) {
+                String comment = commentMatcher.group(1).trim();
+                if (comment.length() > 0 && comment.length() < 200) {
+                    ps.setType("Transaction: " + comment);
+                }
+            }
+        }
+        
+        log.info("DSL parsing complete for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions", 
+                file.getName(), tags.size(),
+                tags.stream().filter(t -> t.getCategory().equals("ACLF_EXTERNAL_DATALIST")).count(),
+                tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD")).count(),
+                tags.stream().filter(t -> t.getCategory().equals("ACLF_TRANSACTION")).count());
+    }
 }
