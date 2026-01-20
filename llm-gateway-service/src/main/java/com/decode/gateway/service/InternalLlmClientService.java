@@ -73,6 +73,9 @@ public class InternalLlmClientService {
                 // Filter sensitive data before sending to LLM
                 String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
                 
+                // Validate and truncate if token count exceeds GPT-4o limit (128k)
+                filteredMessage = validateAndTruncateTokens(filteredMessage, "streaming");
+                
                 String accessToken = azureAdTokenService.getAccessToken();
                 String endpoint = baseUrl + "/chat/completions" + queryParams;
 
@@ -328,6 +331,10 @@ public class InternalLlmClientService {
     private Flux<String> streamCompletionNonStreaming(String userMessage, String model) {
         // Filter sensitive data before sending to LLM
         String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
+        
+        // Validate and truncate if token count exceeds GPT-4o limit (128k)
+        filteredMessage = validateAndTruncateTokens(filteredMessage, "non-streaming");
+        
         return Flux.create(sink -> {
             try {
                 String accessToken = azureAdTokenService.getAccessToken();
@@ -514,6 +521,10 @@ public class InternalLlmClientService {
     public Map<String, Object> createCompletionRequest(String userMessage, String model, boolean stream) {
         // Filter sensitive data before sending to LLM
         String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
+        
+        // Validate and truncate if token count exceeds GPT-4o limit (128k)
+        filteredMessage = validateAndTruncateTokens(filteredMessage, "request");
+        
         Map<String, Object> request = new HashMap<>();
         request.put("model", model != null ? model : defaultModel);
         request.put("stream", stream);
@@ -526,5 +537,53 @@ public class InternalLlmClientService {
         request.put("messages", messages);
         
         return request;
+    }
+
+    /**
+     * Validate token count and truncate message if it exceeds GPT-4o's 128k token limit.
+     * 
+     * @param message Message to validate
+     * @param context Context for logging (streaming, non-streaming, request)
+     * @return Truncated message if needed, original message otherwise
+     */
+    private String validateAndTruncateTokens(String message, String context) {
+        if (message == null || message.isEmpty()) {
+            return message;
+        }
+
+        try {
+            int tokenCount = encoding.encode(message).size();
+            
+            if (tokenCount <= maxInputTokens) {
+                log.debug("Token count OK: {} tokens (limit: {}) for {} request", 
+                        tokenCount, maxInputTokens, context);
+                return message;
+            }
+
+            log.warn("⚠️ Token count exceeds limit: {} tokens (limit: {}) for {} request. Truncating message...", 
+                    tokenCount, maxInputTokens, context);
+            
+            // Truncate by encoding, truncating, then decoding
+            // We'll truncate to slightly less than max to leave room for response
+            List<Integer> tokens = encoding.encode(message);
+            List<Integer> truncatedTokens = tokens.subList(0, maxInputTokens);
+            String truncated = encoding.decode(truncatedTokens);
+            
+            int truncatedTokenCount = truncatedTokens.size();
+            int removedChars = message.length() - truncated.length();
+            
+            log.warn("✅ Truncated message: {} tokens → {} tokens (removed {} chars, {:.1f}% of original)", 
+                    tokenCount, truncatedTokenCount, removedChars, 
+                    (removedChars * 100.0) / message.length());
+            
+            // Add truncation notice to the message
+            return truncated + "\n\n[Note: Message was truncated due to token limit. Original length: " + 
+                   tokenCount + " tokens, truncated to: " + truncatedTokenCount + " tokens]";
+            
+        } catch (Exception e) {
+            log.error("Error validating/truncating tokens for {} request", context, e);
+            // Return original message if truncation fails
+            return message;
+        }
     }
 }
