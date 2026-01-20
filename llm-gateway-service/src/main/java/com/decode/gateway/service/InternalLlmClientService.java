@@ -95,7 +95,7 @@ public class InternalLlmClientService {
                 List<Map<String, String>> messages = new ArrayList<>();
                 Map<String, String> userMsg = new HashMap<>();
                 userMsg.put("role", "user");
-                userMsg.put("content", filteredMessage); // Use filtered message
+                userMsg.put("content", finalFilteredMessage); // Use filtered message
                 messages.add(userMsg);
                 requestBody.put("messages", messages);
 
@@ -110,7 +110,7 @@ public class InternalLlmClientService {
                 log.info("  Content-Type: {}", headers.getContentType());
                 log.info("  Authorization: Bearer {}", accessToken);
                 log.info("Original Message (before filtering): {}", userMessage);
-                log.info("Filtered Message (after filtering): {}", filteredMessage);
+                log.info("Filtered Message (after filtering): {}", finalFilteredMessage);
                 log.info("Full Request Body (JSON):");
                 log.info("{}", requestBodyJson);
                 log.info("================================================================");
