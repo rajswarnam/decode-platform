@@ -43,21 +43,54 @@ public class TokenGovernor {
         }
 
         // RPM limiting: Check if we've exceeded request rate limit
-        if (requestsInCurrentMinute.get() >= rpmLimit) {
+        int currentRequests = requestsInCurrentMinute.get();
+        if (currentRequests >= rpmLimit) {
             long sleepTime = 60000 - (now - windowStartTimestamp);
-            log.warn("RPM Governance: Limit Reached ({} requests). Pausing for {} ms...", 
-                    requestsInCurrentMinute.get(), sleepTime);
+            double rpmPercent = (currentRequests * 100.0) / rpmLimit;
+            log.warn("⚠️ RPM LIMIT REACHED: {}/{} requests ({:.1f}%) in current minute window. Pausing for {} ms...", 
+                    currentRequests, rpmLimit, rpmPercent, sleepTime);
+            log.warn("📊 Rate Limit Stats - RPM: {}/{}, TPM: {}/{}, Window remaining: {} ms", 
+                    currentRequests, rpmLimit, 
+                    tokensUsedInCurrentMinute.get(), tpmLimit,
+                    sleepTime);
             sleep(sleepTime);
             resetTokenBucket();
         }
 
         // TPM limiting: Check if we've exceeded token rate limit
-        if (tokensUsedInCurrentMinute.get() + estimatedTokens > tpmLimit) {
+        int currentTokens = tokensUsedInCurrentMinute.get();
+        if (currentTokens + estimatedTokens > tpmLimit) {
             long sleepTime = 60000 - (now - windowStartTimestamp);
-            log.warn("TPM Governance: Limit Reached ({} tokens). Pausing for {} ms...", 
-                    tokensUsedInCurrentMinute.get(), sleepTime);
+            double tpmPercent = (currentTokens * 100.0) / tpmLimit;
+            log.warn("⚠️ TPM LIMIT REACHED: {}/{} tokens ({:.1f}%) in current minute window. Pausing for {} ms...", 
+                    currentTokens, tpmLimit, tpmPercent, sleepTime);
+            log.warn("📊 Rate Limit Stats - RPM: {}/{}, TPM: {}/{}, Window remaining: {} ms", 
+                    currentRequests, rpmLimit,
+                    currentTokens, tpmLimit,
+                    sleepTime);
             sleep(sleepTime);
             resetTokenBucket();
+        }
+        
+        // Log consumption when hitting warning thresholds (80% and 90%)
+        int newTokenCount = currentTokens + estimatedTokens;
+        double tokenPercent = (newTokenCount * 100.0) / tpmLimit;
+        double requestPercent = ((currentRequests + 1) * 100.0) / rpmLimit;
+        
+        if (tokenPercent >= 90 && tokenPercent < 95) {
+            log.warn("⚠️ TPM WARNING: {}/{} tokens ({:.1f}%) - Approaching limit!", 
+                    newTokenCount, tpmLimit, tokenPercent);
+        } else if (tokenPercent >= 80 && tokenPercent < 90) {
+            log.info("ℹ️ TPM WARNING: {}/{} tokens ({:.1f}%) - High consumption", 
+                    newTokenCount, tpmLimit, tokenPercent);
+        }
+        
+        if (requestPercent >= 90 && requestPercent < 100) {
+            log.warn("⚠️ RPM WARNING: {}/{} requests ({:.1f}%) - Approaching limit!", 
+                    (currentRequests + 1), rpmLimit, requestPercent);
+        } else if (requestPercent >= 80 && requestPercent < 90) {
+            log.info("ℹ️ RPM WARNING: {}/{} requests ({:.1f}%) - High consumption", 
+                    (currentRequests + 1), rpmLimit, requestPercent);
         }
 
         // Rate limiting: Enforce minimum delay between requests
@@ -74,10 +107,50 @@ public class TokenGovernor {
         requestsInCurrentMinute.incrementAndGet();
         lastRequestTimestamp = now;
 
-        log.debug("Governor approved {} tokens, {} requests/min, bucket: {}/{} tokens, {}/{} requests", 
-                estimatedTokens, requestsInCurrentMinute.get(), 
-                tokensUsedInCurrentMinute.get(), tpmLimit,
-                requestsInCurrentMinute.get(), rpmLimit);
+        int finalTokenCount = tokensUsedInCurrentMinute.get();
+        int finalRequestCount = requestsInCurrentMinute.get();
+        double finalTokenPercent = (finalTokenCount * 100.0) / tpmLimit;
+        double finalRequestPercent = (finalRequestCount * 100.0) / rpmLimit;
+        
+        log.debug("✅ Governor approved: {} tokens (Total: {}/{} = {:.1f}%), {} requests/min (Total: {}/{} = {:.1f}%)", 
+                estimatedTokens, finalTokenCount, tpmLimit, finalTokenPercent,
+                finalRequestCount, finalRequestCount, rpmLimit, finalRequestPercent);
+    }
+    
+    /**
+     * Get current consumption metrics
+     * @return Map with current token and request consumption
+     */
+    public synchronized java.util.Map<String, Object> getCurrentMetrics() {
+        long now = System.currentTimeMillis();
+        long windowRemainingMs = 60000 - (now - windowStartTimestamp);
+        
+        int tokens = tokensUsedInCurrentMinute.get();
+        int requests = requestsInCurrentMinute.get();
+        double tokenPercent = (tokens * 100.0) / tpmLimit;
+        double requestPercent = (requests * 100.0) / rpmLimit;
+        
+        java.util.Map<String, Object> metrics = new java.util.HashMap<>();
+        metrics.put("tpm", Map.of(
+            "used", tokens,
+            "limit", tpmLimit,
+            "percentage", Math.round(tokenPercent * 100.0) / 100.0,
+            "remaining", tpmLimit - tokens
+        ));
+        metrics.put("rpm", Map.of(
+            "used", requests,
+            "limit", rpmLimit,
+            "percentage", Math.round(requestPercent * 100.0) / 100.0,
+            "remaining", rpmLimit - requests
+        ));
+        metrics.put("window", Map.of(
+            "startTimestamp", windowStartTimestamp,
+            "remainingMs", Math.max(0, windowRemainingMs),
+            "elapsedMs", now - windowStartTimestamp
+        ));
+        metrics.put("lastRequestTimestamp", lastRequestTimestamp);
+        
+        return metrics;
     }
 
     private void resetTokenBucket() {
