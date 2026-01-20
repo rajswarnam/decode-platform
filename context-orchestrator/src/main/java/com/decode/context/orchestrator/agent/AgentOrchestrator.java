@@ -151,8 +151,19 @@ public class AgentOrchestrator {
                 break;
             }
 
-            // Wait for swarm
-            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            // Wait for swarm (with timeout and interruption handling)
+            try {
+                CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            } catch (Exception e) {
+                // If interrupted or other error, log but continue with partial results
+                if (e.getCause() instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Worker execution interrupted. Some workers may have incomplete results.");
+                } else {
+                    log.error("Error waiting for worker completion", e);
+                }
+                // Continue with whatever results we have - don't fail entire analysis
+            }
             
             // PHASE 3: QA AUDIT
             qaReport = runDeepQACheck(plan, executionPlan, progressConsumer);
@@ -775,6 +786,11 @@ public class AgentOrchestrator {
                 .chatResponse()
                 .toIterable()
                 .forEach(response -> {
+                    // Check for interruption before processing each chunk
+                    if (Thread.currentThread().isInterrupted()) {
+                        log.warn("LLM stream interrupted by thread interruption");
+                        return; // Exit early if interrupted
+                    }
                     if (response.getResult() != null && response.getResult().getOutput() != null) {
                         String content = response.getResult().getOutput().getText(); 
                         if (content != null) {
@@ -782,8 +798,25 @@ public class AgentOrchestrator {
                         }
                     }
                 });
+        } catch (InterruptedException e) {
+            // Thread was interrupted - restore interrupt status and return partial result
+            Thread.currentThread().interrupt();
+            log.warn("LLM call interrupted. Returning partial response ({} chars)", sb.length());
+            if (sb.length() > 0) {
+                return sb.toString() + "\n\n[Note: Response was interrupted but partial results are available]";
+            }
+            return "Error: LLM call was interrupted. Please try again.";
+        } catch (java.util.concurrent.TimeoutException e) {
+            log.error("LLM Call Timeout", e);
+            if (sb.length() > 0) {
+                return sb.toString() + "\n\n[Note: Response timed out but partial results are available]";
+            }
+            return "Error: LLM call timed out. The request took too long to complete.";
         } catch (Exception e) {
             log.error("LLM Call Failed", e);
+            if (sb.length() > 0) {
+                return sb.toString() + "\n\n[Note: Error occurred but partial results are available: " + e.getMessage() + "]";
+            }
             return "Error generating response: " + e.getMessage();
         }
         return sb.toString();
