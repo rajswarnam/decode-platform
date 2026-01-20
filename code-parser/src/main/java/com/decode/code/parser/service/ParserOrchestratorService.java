@@ -299,7 +299,11 @@ public class ParserOrchestratorService {
             }
             added++;
         }
-        if (added > 0) log.info("Saved {} symbols for {}", added, storageKey);
+        if (added > 0) {
+            log.info("✅ Saved {} symbols for {} (Project: {})", added, storageKey, project.getName());
+        } else {
+            log.debug("No symbols extracted from {}", storageKey);
+        }
         
         // Save relationships
         int relAdded = 0;

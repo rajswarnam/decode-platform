@@ -31,6 +31,16 @@ public class VectorizerService {
     public void vectorizeProject(java.util.UUID projectId) {
         log.info("Vectorizing Project ID: {}", projectId);
         List<Symbol> symbols = symbolRepository.findAllBySourceFile_Project_Id(projectId);
+        log.info("Found {} symbols in database for project {}", symbols.size(), projectId);
+        
+        if (symbols.isEmpty()) {
+            log.warn("⚠️ No symbols found in database for project {}. Possible causes:", projectId);
+            log.warn("  1. Parsing may have failed for all files");
+            log.warn("  2. Files may not have been parsed yet");
+            log.warn("  3. Database connection issue");
+            log.warn("  4. Project ID mismatch");
+        }
+        
         vectorizeSymbols(symbols);
     }
 
