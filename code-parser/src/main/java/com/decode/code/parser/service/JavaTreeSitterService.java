@@ -228,28 +228,49 @@ public class JavaTreeSitterService implements LanguageParser {
                 }
             }
             
-            // If we still don't have a valid name, return null (can't create symbol without name)
+            // If we still don't have a valid name, try one more fallback
             if (symbol.getName() == null || symbol.getName().isEmpty() || "Unknown".equals(symbol.getName())) {
-                log.debug("createSymbol: Could not extract name for {} node", category);
+                // Last resort: try to extract name from node type or first child
+                if ("Anonymous".equals(symbol.getName())) {
+                    // Keep Anonymous for methods without names (shouldn't happen but handle gracefully)
+                    log.debug("createSymbol: Using Anonymous name for {} node", category);
+                } else {
+                    log.debug("createSymbol: Could not extract name for {} node", category);
+                    return null;
+                }
+            }
+            
+            // Reject if name is still invalid
+            if (symbol.getName() == null || symbol.getName().isEmpty() || "Unknown".equals(symbol.getName())) {
                 return null;
             }
 
             // Try to extract type for methods (return type)
             if ("method".equals(category) || "constructor".equals(category)) {
-                TSNode typeNode = node.getChildByFieldName("type");
-                if (typeNode == null || typeNode.isNull()) {
-                    // For constructors, type is the class name
-                    if ("constructor".equals(category)) {
-                        // Constructor name is typically the first identifier
-                        if (nameNode != null && !nameNode.isNull()) {
-                            symbol.setType(extractText(nameNode, sourceCode));
+                try {
+                    TSNode typeNode = node.getChildByFieldName("type");
+                    if (typeNode == null || typeNode.isNull()) {
+                        // For constructors, type is the class name
+                        if ("constructor".equals(category)) {
+                            // Constructor name is typically the first identifier
+                            if (nameNode != null && !nameNode.isNull()) {
+                                symbol.setType(extractText(nameNode, sourceCode));
+                            }
+                        } else {
+                            // For methods without explicit return type (void methods or compiler-inferred)
+                            symbol.setType("void"); // Default type
+                        }
+                    } else {
+                        String typeText = extractText(typeNode, sourceCode);
+                        if (!"Unknown".equals(typeText)) {
+                            symbol.setType(typeText);
+                        } else {
+                            symbol.setType("void"); // Fallback to void if type extraction fails
                         }
                     }
-                } else {
-                    String typeText = extractText(typeNode, sourceCode);
-                    if (!"Unknown".equals(typeText)) {
-                        symbol.setType(typeText);
-                    }
+                } catch (Exception e) {
+                    log.debug("Failed to extract type for {} method: {}", category, e.getMessage());
+                    symbol.setType("void"); // Fallback type
                 }
             }
 

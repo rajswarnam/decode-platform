@@ -176,12 +176,19 @@ public class ParserOrchestratorService {
                 continue;
             }
 
-            boolean hadSymbols = processMinioObject(project, objectKey);
-            if (hadSymbols) {
-                filesProcessed++;
-                filesWithSymbols++;
-            } else {
+            try {
+                boolean hadSymbols = processMinioObject(project, objectKey);
+                if (hadSymbols) {
+                    filesProcessed++;
+                    filesWithSymbols++;
+                } else {
+                    filesSkipped++;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to process file: {} (error: {}). Continuing with other files.", 
+                        objectKey, e.getMessage());
                 filesSkipped++;
+                // Continue processing other files - don't fail entire project
             }
         }
 
