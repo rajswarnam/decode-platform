@@ -56,13 +56,26 @@ public class JavaTreeSitterService implements LanguageParser {
 
             TSTree tree = parser.parseString(null, sourceCode);
             TSNode root = tree.getRootNode();
+            
+            if (root == null || root.isNull()) {
+                log.warn("Parsed tree has null root node for file: {}", file.getName());
+                return symbols;
+            }
 
             traverse(root, symbols, sourceCode);
 
             return symbols;
+        } catch (org.treesitter.TSException e) {
+            log.warn("Tree-sitter parsing error for file {}: {}", file.getName(), e.getMessage());
+            // Continue with other files instead of failing entire project
+            return symbols; // Return empty list, don't crash
         } catch (IOException e) {
             log.error("Failed to read file", e);
             throw new RuntimeException(e);
+        } catch (Exception e) {
+            log.error("Unexpected error parsing file {}: {}", file.getName(), e.getMessage(), e);
+            // Continue with other files instead of failing entire project
+            return symbols; // Return empty list, don't crash
         }
     }
 
