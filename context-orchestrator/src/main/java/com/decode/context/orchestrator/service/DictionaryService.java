@@ -195,9 +195,9 @@ public class DictionaryService {
 
         try {
             // Direct call. Gateway handles TPM and RPM.
-            // Add small delay between requests to prevent rapid-fire calls
+            // Add delay between requests to prevent rapid-fire calls (respects rate limits)
             try {
-                Thread.sleep(100); // 100ms delay between dictionary mapping requests
+                Thread.sleep(300); // 300ms delay between dictionary mapping requests (3.3 req/sec max)
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 log.warn("Interrupted while waiting between dictionary requests");
