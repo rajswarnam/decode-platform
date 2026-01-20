@@ -24,6 +24,7 @@ import java.util.regex.Matcher;
  * - Bank Account Numbers - 8-17 digits (when near banking keywords)
  * - US Phone Numbers - 10 digits, various formats
  * - IP Addresses (IPv4) - 4 octets format
+ * - 8-Digit Numbers (PCI data, dates YYYYMMDD) - patterns like 20231031
  * 
  * Configurable via application.yaml:
  * - llm.privacy.filter.enabled: true/false
@@ -98,6 +99,13 @@ public class DataPrivacyFilterService {
         "\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b"
     );
 
+    // 8-digit numbers (PCI data, dates YYYYMMDD, account numbers)
+    // Used to catch patterns like 20231031, account numbers, etc.
+    // This is a broad pattern that may catch legitimate dates, but PCI compliance requires it
+    private static final Pattern EIGHT_DIGIT_NUMBER_PATTERN = Pattern.compile(
+        "\\b[0-9]{8}\\b"
+    );
+
     // Optional: Email pattern (can be disabled if needed)
     private static final Pattern EMAIL_PATTERN = Pattern.compile(
         "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
@@ -142,6 +150,11 @@ public class DataPrivacyFilterService {
         
         filtered = applyPattern(filtered, IP_ADDRESS_PATTERN, "IP Address", totalRedactions);
         totalRedactions += countMatches(originalMessage, IP_ADDRESS_PATTERN);
+
+        // 8-digit numbers (PCI data, dates, account numbers) - catch patterns like 20231031
+        // Must come after more specific patterns (SSN, ITIN, EIN, Bank Routing, etc.)
+        filtered = applyPattern(filtered, EIGHT_DIGIT_NUMBER_PATTERN, "8-Digit Number (PCI)", totalRedactions);
+        totalRedactions += countMatches(originalMessage, EIGHT_DIGIT_NUMBER_PATTERN);
 
         // Apply custom patterns from configuration
         if (customPatterns != null && !customPatterns.isEmpty()) {

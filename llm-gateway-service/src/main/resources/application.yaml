@@ -36,6 +36,7 @@ llm:
   retry:
     max-attempts: 3      # Max retry attempts for 429 errors
     initial-delay-ms: 3000  # Initial delay for 429 retry (exponential backoff: 3s, 6s, 12s)
+  max-input-tokens: 120000  # GPT-4o supports 128k tokens, use 120k for input (8k buffer for response)
   privacy:
     filter:
       enabled: true  # Enable data privacy filtering

@@ -2,6 +2,10 @@ package com.decode.gateway.service;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.knuddels.jtokkit.Encodings;
+import com.knuddels.jtokkit.api.Encoding;
+import com.knuddels.jtokkit.api.EncodingRegistry;
+import com.knuddels.jtokkit.api.EncodingType;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +44,13 @@ public class InternalLlmClientService {
 
     @Value("${llm.retry.initial-delay-ms:3000}")
     private long initialRetryDelayMs = 3000; // Start with 3s delay for 429 errors
+
+    @Value("${llm.max-input-tokens:120000}")
+    private int maxInputTokens = 120_000; // GPT-4o supports 128k, leave 8k buffer for response
+
+    // Token encoding for GPT-4o (CL100K_BASE)
+    private final EncodingRegistry encodingRegistry = Encodings.newDefaultEncodingRegistry();
+    private final Encoding encoding = encodingRegistry.getEncoding(EncodingType.CL100K_BASE);
 
     /**
      * Call internal LLM gateway for streaming response.
