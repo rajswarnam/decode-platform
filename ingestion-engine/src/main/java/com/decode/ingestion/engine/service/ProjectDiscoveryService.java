@@ -110,14 +110,46 @@ public class ProjectDiscoveryService {
         if (Files.exists(dir.resolve("CMakeLists.txt")) || Files.exists(dir.resolve("Makefile")))
             tech.add("C/C++");
 
-        // Scan for COBOL files (files ending in .cbl, .cob, .cpy)
+        // Scan for source files to detect tech stack (even without build files)
         try (Stream<Path> stream = Files.list(dir)) {
-            boolean hasCobol = stream.anyMatch(p -> {
+            boolean hasCobol = false;
+            boolean hasC = false;
+            boolean hasCpp = false;
+            
+            for (Path p : stream.collect(java.util.stream.Collectors.toList())) {
                 String s = p.toString().toLowerCase();
-                return s.endsWith(".cbl") || s.endsWith(".cob") || s.endsWith(".cpy");
-            });
+                
+                // COBOL detection
+                if (s.endsWith(".cbl") || s.endsWith(".cob") || s.endsWith(".cpy")) {
+                    hasCobol = true;
+                }
+                
+                // C/C++ detection by source files (not just build files)
+                if (s.endsWith(".c")) {
+                    hasC = true;
+                }
+                if (s.endsWith(".cpp") || s.endsWith(".cc") || s.endsWith(".cxx") || s.endsWith(".c++")) {
+                    hasCpp = true;
+                }
+                if (s.endsWith(".h") || s.endsWith(".hpp") || s.endsWith(".hxx")) {
+                    // Header files could be C or C++, but if we see .c files, it's C
+                    // If we see .cpp files, it's C++
+                    // If we only see headers, assume C++ (more common)
+                    if (!hasC && !hasCpp) {
+                        hasCpp = true; // Default to C++ if only headers
+                    }
+                }
+            }
+            
             if (hasCobol)
                 tech.add("COBOL");
+            
+            // Add C/C++ if we found source files (even without CMakeLists.txt or Makefile)
+            if (hasC || hasCpp) {
+                if (!tech.contains("C/C++")) {
+                    tech.add("C/C++");
+                }
+            }
         } catch (IOException e) {
             log.warn("Error scanning dir for files: {}", dir, e);
         }
