@@ -305,10 +305,88 @@ public class AclfParserService implements LanguageParser {
             }
         }
         
-        log.info("DSL parsing complete for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions", 
-                file.getName(), tags.size(),
-                tags.stream().filter(t -> t.getCategory().equals("ACLF_EXTERNAL_DATALIST")).count(),
-                tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD")).count(),
-                tags.stream().filter(t -> t.getCategory().equals("ACLF_TRANSACTION")).count());
+        // Pattern 4: FormBlock definitions
+        // Example: FormBlock HSACCTB1 { Height = 10; Width = 80; Fields = { ... } }
+        java.util.regex.Pattern formBlockPattern = java.util.regex.Pattern.compile(
+            "FormBlock\\s+(\\w+)\\s*\\{", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher formBlockMatcher = formBlockPattern.matcher(content);
+        while (formBlockMatcher.find()) {
+            String formBlockName = formBlockMatcher.group(1);
+            ParsedSymbol ps = new ParsedSymbol();
+            ps.setName(formBlockName);
+            ps.setCategory("ACLF_FORM_BLOCK");
+            ps.setType("FormBlock");
+            int lineNumber = content.substring(0, formBlockMatcher.start()).split("\n").length;
+            ps.setStartLine(lineNumber);
+            ps.setEndLine(lineNumber);
+            tags.add(ps);
+            log.debug("Found FormBlock: {}", formBlockName);
+        }
+        
+        // Pattern 5: FormReport definitions
+        // Example: FormReport HSCUSTF { Description = "Host Customer List"; ... }
+        java.util.regex.Pattern formReportPattern = java.util.regex.Pattern.compile(
+            "FormReport\\s+(\\w+)\\s*\\{[^}]*Description\\s*=\\s*\"([^\"]+)\"", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL
+        );
+        java.util.regex.Matcher formReportMatcher = formReportPattern.matcher(content);
+        while (formReportMatcher.find()) {
+            String formReportName = formReportMatcher.group(1);
+            String description = formReportMatcher.group(2);
+            ParsedSymbol ps = new ParsedSymbol();
+            ps.setName(formReportName);
+            ps.setCategory("ACLF_FORM_REPORT");
+            ps.setType("FormReport: " + description);
+            int lineNumber = content.substring(0, formReportMatcher.start()).split("\n").length;
+            ps.setStartLine(lineNumber);
+            ps.setEndLine(lineNumber);
+            tags.add(ps);
+            log.debug("Found FormReport: {} ({})", formReportName, description);
+        }
+        
+        // Pattern 6: Calculation definitions
+        // Example: Calculation CALCDAYS { Execute() { ... } }
+        java.util.regex.Pattern calculationPattern = java.util.regex.Pattern.compile(
+            "Calculation\\s+(\\w+)\\s*\\{", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher calculationMatcher = calculationPattern.matcher(content);
+        while (calculationMatcher.find()) {
+            String calculationName = calculationMatcher.group(1);
+            ParsedSymbol ps = new ParsedSymbol();
+            ps.setName(calculationName);
+            ps.setCategory("ACLF_CALCULATION");
+            ps.setType("Calculation");
+            int lineNumber = content.substring(0, calculationMatcher.start()).split("\n").length;
+            ps.setStartLine(lineNumber);
+            ps.setEndLine(lineNumber);
+            tags.add(ps);
+            log.debug("Found Calculation: {}", calculationName);
+            
+            // Try to extract calculation purpose from comments within the calculation block
+            int calculationStart = calculationMatcher.start();
+            int calculationEnd = Math.min(content.length(), calculationStart + 1000); // Look at first 1000 chars
+            String calculationBlock = content.substring(calculationStart, calculationEnd);
+            java.util.regex.Pattern commentPattern = java.util.regex.Pattern.compile("//\\s*(.+?)\\n", java.util.regex.Pattern.MULTILINE);
+            java.util.regex.Matcher commentMatcher = commentPattern.matcher(calculationBlock);
+            if (commentMatcher.find()) {
+                String comment = commentMatcher.group(1).trim();
+                if (comment.length() > 0 && comment.length() < 200) {
+                    ps.setType("Calculation: " + comment);
+                }
+            }
+        }
+        
+        long datalistCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_EXTERNAL_DATALIST")).count();
+        long datafieldCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD")).count();
+        long transactionCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_TRANSACTION")).count();
+        long formBlockCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FORM_BLOCK")).count();
+        long formReportCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FORM_REPORT")).count();
+        long calculationCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_CALCULATION")).count();
+        
+        log.info("DSL parsing complete for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} FormBlocks, {} FormReports, {} Calculations", 
+                file.getName(), tags.size(), datalistCount, datafieldCount, transactionCount, formBlockCount, formReportCount, calculationCount);
     }
 }
