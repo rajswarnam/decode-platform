@@ -224,7 +224,7 @@ public class IngestionController {
                             
                             // Progress reporting for large uploads (every 10000 files or 50MB)
                             if (fileCount % 10000 == 0 || totalBytesExtracted % (50 * 1024 * 1024) == 0) {
-                                long extractedMB = totalBytesExtracted / (1024 * 1024);
+                                double extractedMB = (double) totalBytesExtracted / (1024 * 1024);
                                 ingestionEventService.sendEvent(
                                     String.format("📂 Extracted %d files (%.1f MB)...", fileCount, extractedMB)
                                 );
@@ -233,8 +233,8 @@ public class IngestionController {
                     }
                 }
                 
-                long finalExtractedMB = totalBytesExtracted / (1024 * 1024);
-                log.info("✅ Extracted {} files ({} MB) from ZIP", fileCount, finalExtractedMB);
+                double finalExtractedMB = (double) totalBytesExtracted / (1024 * 1024);
+                log.info("✅ Extracted {} files ({:.1f} MB) from ZIP", fileCount, String.format("%.1f", finalExtractedMB));
                 ingestionEventService.sendEvent(
                     String.format("✅ ZIP extraction complete: %d files (%.1f MB)", fileCount, finalExtractedMB)
                 );
