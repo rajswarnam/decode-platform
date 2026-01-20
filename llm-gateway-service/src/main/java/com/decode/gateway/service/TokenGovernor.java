@@ -1,19 +1,27 @@
 package com.decode.gateway.service;
 
+import com.decode.gateway.domain.RateLimitEvent;
+import com.decode.gateway.repository.RateLimitEventRepository;
 import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingRegistry;
 import com.knuddels.jtokkit.api.EncodingType;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class TokenGovernor {
+
+    private final RateLimitEventRepository rateLimitEventRepository;
 
     @Value("${llm.governor.tpm-limit:250000}")
     private int tpmLimit = 250_000; // User has 250k TPM quota
@@ -89,6 +97,12 @@ public class TokenGovernor {
                     projectedTokens, tpmLimit,
                     windowRemainingMs);
             
+            // Log to database
+            logRateLimitEvent(RateLimitEvent.RateLimitEventType.TPM_PAUSE_THRESHOLD,
+                    projectedTokens, tpmLimit, tpmPercent,
+                    currentRequests, rpmLimit, (currentRequests * 100.0) / rpmLimit,
+                    windowRemainingMs, windowRemainingMs, "Proactive pause at threshold");
+            
             // Send progress updates during pause to keep UI connection alive
             if (pauseProgressCallback != null) {
                 long pauseSeconds = windowRemainingMs / 1000;
@@ -134,6 +148,12 @@ public class TokenGovernor {
                     currentRequests, rpmLimit,
                     currentTokens, tpmLimit,
                     sleepTime);
+            
+            // Log to database
+            logRateLimitEvent(RateLimitEvent.RateLimitEventType.TPM_LIMIT_REACHED,
+                    currentTokens, tpmLimit, tpmPercent,
+                    currentRequests, rpmLimit, (currentRequests * 100.0) / rpmLimit,
+                    sleepTime, sleepTime, "TPM hard limit reached");
             
             // Send progress updates during pause to keep UI connection alive
             if (pauseProgressCallback != null) {
