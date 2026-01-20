@@ -698,10 +698,34 @@ docker-compose up -d
 
 ---
 
+## Startup Behavior & Idempotency
+
+### Auto-Startup Configuration
+
+All services default to **no auto-startup** to prevent duplicate work:
+
+- **Parser**: `parser.auto-parse-on-startup: false` (default)
+  - Projects parsed during ingestion, not on every restart
+  - Skips projects that already have symbols
+
+- **Vectorizer**: `vectorizer.auto-vectorize-on-startup: false` (default)
+  - Symbols vectorized when triggered by code-parser or via API
+  - Duplicate prevention via deterministic IDs (`symbol_id` as Qdrant point ID)
+
+- **Dictionary**: `dictionary.auto-populate-on-startup: false` (default)
+  - Dictionary populated during ingestion or via API
+  - Uses `analysis_status` to track PENDING/COMPLETED/FAILED
+
+### Benefits
+
+- **Faster Startup**: No unnecessary work on restart
+- **Idempotent Operations**: Can safely restart without duplicate processing
+- **On-Demand Processing**: Trigger parsing/vectorization when needed
+
 ## Future Enhancements
 
-1. **Evaluation Framework**: Automated quality checks, drift detection
-2. **Agent Memory**: Short-term and long-term memory for learning
+1. **Evaluation Framework**: Automated quality checks, drift detection (see evaluation-framework-proposal.md)
+2. **Agent Memory**: Short-term and long-term memory for learning (see agent-memory-architecture.md)
 3. **Graph Database**: Neo4j for relationship mapping
 4. **Real-time Collaboration**: Multi-user analysis sessions
 5. **Custom Personas**: User-defined worker personas
