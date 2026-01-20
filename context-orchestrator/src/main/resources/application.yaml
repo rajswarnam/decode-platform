@@ -35,10 +35,11 @@ spring:
         # Let Spring AI auto-download the model if not found locally
         # It will cache to /tmp/spring-ai-onnx-generative/ by default
         onnx:
-          model-uri: file:/models/model.onnx
-          tokenizer-uri: file:/models/tokenizer.json
-          # Fallback: If files don't exist, Spring AI will auto-download
-          # You can also use: jar:classpath:/models/model.onnx
+          # Commented out: Local model file is invalid/corrupted
+          # Spring AI will auto-download a valid model to cache
+          # model-uri: file:/models/model.onnx
+          # tokenizer-uri: file:/models/tokenizer.json
+          # To use local model again, regenerate it with scripts/download_onnx_model.py
     vectorstore:
       qdrant:
         host: qdrant
