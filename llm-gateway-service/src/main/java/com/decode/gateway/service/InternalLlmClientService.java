@@ -6,6 +6,7 @@ import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingRegistry;
 import com.knuddels.jtokkit.api.EncodingType;
+import com.knuddels.jtokkit.api.IntArrayList;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -565,9 +566,9 @@ public class InternalLlmClientService {
             
             // Truncate by encoding, truncating, then decoding
             // We'll truncate to slightly less than max to leave room for response
-            // jtokkit returns IntArrayList, we need to convert to List<Integer> for decode()
-            var tokens = encoding.encode(message);
-            List<Integer> truncatedTokens = new ArrayList<>();
+            // jtokkit returns IntArrayList, and decode() also expects IntArrayList
+            IntArrayList tokens = encoding.encode(message);
+            IntArrayList truncatedTokens = new IntArrayList();
             for (int i = 0; i < maxInputTokens && i < tokens.size(); i++) {
                 truncatedTokens.add(tokens.get(i));
             }
