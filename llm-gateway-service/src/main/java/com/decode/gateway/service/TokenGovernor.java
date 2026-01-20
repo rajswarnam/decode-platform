@@ -78,6 +78,14 @@ public class TokenGovernor {
                     currentRequests, rpmLimit, 
                     tokensUsedInCurrentMinute.get(), tpmLimit,
                     sleepTime);
+            
+            // Log to database
+            logRateLimitEvent(RateLimitEvent.RateLimitEventType.RPM_LIMIT_REACHED,
+                    tokensUsedInCurrentMinute.get(), tpmLimit, 
+                    (tokensUsedInCurrentMinute.get() * 100.0) / tpmLimit,
+                    currentRequests, rpmLimit, rpmPercent,
+                    sleepTime, sleepTime, "RPM limit reached");
+            
             sleep(sleepTime);
             resetTokenBucket();
         }
