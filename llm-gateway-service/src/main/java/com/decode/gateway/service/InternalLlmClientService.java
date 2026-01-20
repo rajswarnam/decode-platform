@@ -69,13 +69,14 @@ public class InternalLlmClientService {
      * Streaming completion (Server-Sent Events).
      */
     private Flux<String> streamCompletionStreaming(String userMessage, String model) {
+        // Filter sensitive data before sending to LLM
+        String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
+        
+        // Validate and truncate if token count exceeds GPT-4o limit (128k)
+        final String finalFilteredMessage = validateAndTruncateTokens(filteredMessage, "streaming");
+        
         return Flux.create(sink -> {
             try {
-                // Filter sensitive data before sending to LLM
-                String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
-                
-                // Validate and truncate if token count exceeds GPT-4o limit (128k)
-                filteredMessage = validateAndTruncateTokens(filteredMessage, "streaming");
                 
                 String accessToken = azureAdTokenService.getAccessToken();
                 String endpoint = baseUrl + "/chat/completions" + queryParams;
@@ -334,7 +335,7 @@ public class InternalLlmClientService {
         String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
         
         // Validate and truncate if token count exceeds GPT-4o limit (128k)
-        filteredMessage = validateAndTruncateTokens(filteredMessage, "non-streaming");
+        final String finalFilteredMessage = validateAndTruncateTokens(filteredMessage, "non-streaming");
         
         return Flux.create(sink -> {
             try {
@@ -356,7 +357,7 @@ public class InternalLlmClientService {
                 List<Map<String, String>> messages = new ArrayList<>();
                 Map<String, String> userMsg = new HashMap<>();
                 userMsg.put("role", "user");
-                userMsg.put("content", filteredMessage); // Use filtered message
+                userMsg.put("content", finalFilteredMessage); // Use filtered message
                 messages.add(userMsg);
                 requestBody.put("messages", messages);
 
@@ -371,7 +372,7 @@ public class InternalLlmClientService {
                 log.info("  Content-Type: {}", headers.getContentType());
                 log.info("  Authorization: Bearer {}", accessToken);
                 log.info("Original Message (before filtering): {}", userMessage);
-                log.info("Filtered Message (after filtering): {}", filteredMessage);
+                log.info("Filtered Message (after filtering): {}", finalFilteredMessage);
                 log.info("Full Request Body (JSON):");
                 log.info("{}", requestBodyJson);
                 log.info("================================================================");
