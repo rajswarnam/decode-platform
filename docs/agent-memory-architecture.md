@@ -597,10 +597,369 @@ Session 1: Discovers "OAuth2 is used for authentication"
 Session 2: Query "How does auth work?" → Retrieves stored knowledge
 ```
 
+## Success Detection Without User Feedback
+
+### The Challenge
+
+Users typically don't provide explicit feedback (thumbs up/down, ratings). We need **implicit signals** to determine if an analysis was successful.
+
+### Implicit Success Signals
+
+#### 1. **Conversation Continuation** (Strong Signal)
+```java
+// User continues conversation = successful response
+if (userAskedFollowUpQuestion) {
+    successScore += 0.8;  // Very strong signal
+}
+```
+
+**Signals**:
+- User asks follow-up questions → Analysis was useful
+- User asks clarifying questions → Analysis was engaging
+- User explores deeper → Analysis sparked interest
+
+**Detection**:
+```java
+public boolean isSuccessfulAnalysis(String sessionId, String response) {
+    // Check if user asked follow-up within 5 minutes
+    List<ConversationMessage> recentMessages = getRecentMessages(sessionId, Duration.ofMinutes(5));
+    boolean hasFollowUp = recentMessages.stream()
+        .anyMatch(m -> m.getRole().equals("user") && 
+                      isFollowUpQuestion(m.getContent()));
+    
+    return hasFollowUp;  // User engaged = success
+}
+```
+
+#### 2. **Query Reformulation** (Negative Signal)
+```java
+// User re-asks same question = previous response was inadequate
+if (userReaskedSameQuestion) {
+    successScore -= 0.6;  // Strong negative signal
+}
+```
+
+**Signals**:
+- User reformulates the same question → Previous answer didn't help
+- User asks "can you explain differently" → Response was unclear
+- User repeats query with minor variations → Response was insufficient
+
+**Detection**:
+```java
+public boolean isUnsuccessfulAnalysis(String sessionId, String currentQuery) {
+    // Check if user re-asked similar question recently
+    List<ConversationMessage> recentQueries = getRecentUserQueries(sessionId, 3);
+    
+    for (ConversationMessage previousQuery : recentQueries) {
+        double similarity = calculateSimilarity(currentQuery, previousQuery.getContent());
+        if (similarity > 0.8) {  // Very similar queries
+            return true;  // User re-asking = previous was unsuccessful
+        }
+    }
+    
+    return false;
+}
+```
+
+#### 3. **Response Quality Metrics** (Internal Signals)
+```java
+// Measure response quality without user feedback
+public double calculateInternalSuccessScore(String response, QueryContext context) {
+    double score = 0.0;
+    
+    // Response length (too short = might be incomplete)
+    if (response.length() > 200) score += 0.2;
+    if (response.length() > 500) score += 0.1;
+    
+    // Mentions specific files/entities
+    int fileMentions = countFileMentions(response);
+    if (fileMentions > 0) score += 0.2;
+    if (fileMentions > 2) score += 0.1;
+    
+    // Structured response (has sections, lists)
+    if (hasStructuredContent(response)) score += 0.2;
+    
+    // Cites source code
+    if (hasCodeReferences(response)) score += 0.1;
+    
+    // No generic responses
+    if (!isGenericResponse(response)) score += 0.2;
+    
+    return Math.min(score, 1.0);
+}
+```
+
+**Metrics**:
+- **Response Length**: Too short (<100 chars) might be incomplete
+- **Specificity**: Mentions specific files, classes, methods
+- **Structure**: Has sections, lists, organized content
+- **Code References**: References actual source code
+- **No Generic Text**: Avoids "The application has features" type responses
+
+#### 4. **Retrieval Relevance** (RAG Quality)
+```java
+// Measure if retrieved files are actually relevant
+public double calculateRetrievalSuccessScore(String query, List<Document> retrievedFiles) {
+    // Use evaluation framework to check relevance
+    List<String> expectedFiles = getExpectedRelevantFiles(query);
+    List<String> actualFiles = retrievedFiles.stream()
+        .map(d -> d.getMetadata().get("file_name"))
+        .collect(Collectors.toList());
+    
+    // Precision: How many retrieved files are relevant?
+    long relevantRetrieved = actualFiles.stream()
+        .filter(expectedFiles::contains)
+        .count();
+    
+    double precision = actualFiles.isEmpty() ? 0.0 : 
+                      (double) relevantRetrieved / actualFiles.size();
+    
+    // If precision is high, retrieval was successful
+    return precision > 0.7 ? 1.0 : precision * 1.4;
+}
+```
+
+**Signals**:
+- Retrieved files match query intent → Good retrieval
+- Retrieved files are relevant (based on evaluation) → Good RAG
+- High similarity scores → Good vector search
+
+#### 5. **Analysis Completeness** (Coverage Metrics)
+```java
+// Check if analysis covered all aspects of query
+public double calculateCompletenessScore(String query, String response, QueryIntent intent) {
+    double score = 0.0;
+    
+    // Extract expected topics from query
+    List<String> expectedTopics = extractExpectedTopics(query, intent);
+    
+    // Check if response covers these topics
+    for (String topic : expectedTopics) {
+        if (response.toLowerCase().contains(topic.toLowerCase())) {
+            score += 1.0 / expectedTopics.size();
+        }
+    }
+    
+    // Bonus: Response covers more than expected
+    List<String> additionalTopics = extractTopics(response);
+    if (additionalTopics.size() > expectedTopics.size()) {
+        score += 0.1;  // Bonus for thoroughness
+    }
+    
+    return Math.min(score, 1.0);
+}
+```
+
+**Signals**:
+- Covers all expected topics → Complete analysis
+- Addresses all query aspects → Thorough response
+- Provides additional insights → Value-added
+
+#### 6. **LLM-as-Judge** (Quality Scoring)
+```java
+// Use LLM to evaluate response quality
+public double evaluateResponseQuality(String query, String response) {
+    String prompt = String.format(
+        "Evaluate the quality of this response to the query.\n\n" +
+        "Query: %s\n\n" +
+        "Response: %s\n\n" +
+        "Rate the response on:\n" +
+        "- Relevance (0-1): Does it answer the query?\n" +
+        "- Completeness (0-1): Does it cover all aspects?\n" +
+        "- Clarity (0-1): Is it clear and understandable?\n" +
+        "- Usefulness (0-1): Would this help a user?\n\n" +
+        "Return a JSON with scores.",
+        query, response
+    );
+    
+    // Use LLM to score
+    String evaluation = llmJudgeService.evaluate(prompt);
+    EvaluationScores scores = parseEvaluation(evaluation);
+    
+    // Average of all scores
+    return (scores.getRelevance() + scores.getCompleteness() + 
+            scores.getClarity() + scores.getUsefulness()) / 4.0;
+}
+```
+
+**Signals**:
+- LLM judges response as high quality → Likely successful
+- LLM identifies missing aspects → Areas for improvement
+- Consistent high scores → Reliable pattern
+
+#### 7. **Session Duration** (Engagement Signal)
+```java
+// Longer session = more engagement = successful responses
+public double calculateEngagementScore(String sessionId) {
+    ConversationSession session = getSession(sessionId);
+    Duration sessionDuration = Duration.between(
+        session.getCreatedAt(), 
+        session.getLastActivityAt()
+    );
+    
+    int messageCount = countMessages(sessionId);
+    
+    // Longer sessions with more messages = higher engagement
+    double durationScore = Math.min(sessionDuration.toMinutes() / 10.0, 1.0);  // Max 10 min
+    double messageScore = Math.min(messageCount / 5.0, 1.0);  // Max 5 messages
+    
+    return (durationScore * 0.6 + messageScore * 0.4);
+}
+```
+
+**Signals**:
+- Long session duration → User engaged
+- Multiple messages → User finding value
+- Active exploration → Responses are useful
+
+### Combined Success Detection
+
+```java
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class SuccessDetectionService {
+    
+    private final ShortTermMemoryService shortTermMemory;
+    private final LLMJudgeService llmJudge;
+    private final EvaluationService evalService;
+    
+    /**
+     * Calculate overall success score for an analysis
+     */
+    public double calculateSuccessScore(String sessionId, String query, String response, 
+                                       List<Document> retrievedFiles, QueryIntent intent) {
+        double score = 0.0;
+        double weight = 0.0;
+        
+        // 1. Conversation continuation (40% weight)
+        boolean hasFollowUp = checkFollowUpQuestion(sessionId);
+        if (hasFollowUp) {
+            score += 0.8 * 0.4;
+        }
+        weight += 0.4;
+        
+        // 2. Query reformulation (20% weight)
+        boolean isReask = checkReaskSameQuestion(sessionId, query);
+        if (!isReask) {
+            score += 0.8 * 0.2;  // Not re-asking = success
+        }
+        weight += 0.2;
+        
+        // 3. Internal quality metrics (20% weight)
+        double internalScore = calculateInternalSuccessScore(response, query);
+        score += internalScore * 0.2;
+        weight += 0.2;
+        
+        // 4. Retrieval relevance (10% weight)
+        double retrievalScore = calculateRetrievalSuccessScore(query, retrievedFiles);
+        score += retrievalScore * 0.1;
+        weight += 0.1;
+        
+        // 5. LLM-as-judge (10% weight) - optional, expensive
+        if (shouldUseLLMJudge()) {
+            double llmScore = llmJudge.evaluateResponseQuality(query, response);
+            score += llmScore * 0.1;
+            weight += 0.1;
+        }
+        
+        // Normalize score
+        return weight > 0 ? score / weight : 0.0;
+    }
+    
+    /**
+     * Determine if analysis should be learned (success threshold)
+     */
+    public boolean shouldLearnFromAnalysis(double successScore) {
+        // Only learn from successful analyses (threshold: 0.7)
+        return successScore >= 0.7;
+    }
+    
+    /**
+     * Check for follow-up questions
+     */
+    private boolean checkFollowUpQuestion(String sessionId) {
+        List<ConversationMessage> recent = shortTermMemory.getConversationHistory(sessionId, 5);
+        
+        // Check if user asked follow-up within 5 minutes
+        return recent.stream()
+            .filter(m -> m.getRole().equals("user"))
+            .filter(m -> Duration.between(m.getCreatedAt(), Instant.now()).toMinutes() < 5)
+            .anyMatch(m -> isFollowUpQuestion(m.getContent()));
+    }
+    
+    /**
+     * Check if user re-asked similar question
+     */
+    private boolean checkReaskSameQuestion(String sessionId, String currentQuery) {
+        List<ConversationMessage> recentQueries = shortTermMemory.getConversationHistory(sessionId, 3)
+            .stream()
+            .filter(m -> m.getRole().equals("user"))
+            .collect(Collectors.toList());
+        
+        for (ConversationMessage previous : recentQueries) {
+            double similarity = calculateTextSimilarity(currentQuery, previous.getContent());
+            if (similarity > 0.8) {
+                return true;  // Very similar = re-asking
+            }
+        }
+        
+        return false;
+    }
+}
+```
+
+### Usage in Memory Learning
+
+```java
+public String executeSwarm(String userQuery, String projectContext, String domain, 
+                          Consumer<String> progressConsumer, Consumer<String> resultConsumer) {
+    
+    // ... execute analysis ...
+    String result = executeAnalysis(userQuery, projectContext, domain, progressConsumer);
+    List<Document> retrievedFiles = getRetrievedFiles();
+    QueryIntent intent = getQueryIntent(userQuery);
+    
+    // Calculate success score
+    double successScore = successDetectionService.calculateSuccessScore(
+        sessionId, userQuery, result, retrievedFiles, intent);
+    
+    // Learn from successful analyses
+    if (successDetectionService.shouldLearnFromAnalysis(successScore)) {
+        log.info("Analysis successful (score: {}), learning from it", successScore);
+        
+        // Learn pattern
+        longTermMemoryService.learnFromSuccess(
+            projectId, "query_strategy", generatePatternKey(userQuery), 
+            extractPatternData(result));
+        
+        // Store knowledge
+        longTermMemoryService.storeProjectKnowledge(
+            projectId, "domain_concept", extractKeyInsights(result), 
+            successScore, sessionId);
+    } else {
+        log.debug("Analysis not successful enough (score: {}), skipping learning", successScore);
+    }
+    
+    return result;
+}
+```
+
+### Success Metrics Dashboard
+
+Track these metrics over time:
+- **Success Rate**: % of analyses above threshold
+- **Follow-Up Rate**: % of queries that get follow-ups
+- **Reask Rate**: % of queries that are re-asked
+- **Average Quality Score**: Average internal quality score
+- **Retrieval Precision**: Average retrieval relevance
+
 ## Next Steps
 
 1. Review and approve architecture
-2. Create database migration scripts
-3. Implement Phase 1 (Short-Term Memory)
-4. Test with real queries
-5. Iterate and improve
+2. Implement success detection service
+3. Create database migration scripts
+4. Implement Phase 1 (Short-Term Memory)
+5. Test with real queries
+6. Monitor success metrics
+7. Iterate and improve
