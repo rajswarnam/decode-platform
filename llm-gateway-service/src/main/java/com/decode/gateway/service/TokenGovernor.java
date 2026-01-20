@@ -291,4 +291,34 @@ public class TokenGovernor {
             Thread.currentThread().interrupt();
         }
     }
+
+    /**
+     * Log rate limit event to database for analytics and monitoring
+     */
+    @Transactional
+    private void logRateLimitEvent(RateLimitEvent.RateLimitEventType eventType,
+                                   int tpmUsed, int tpmLimit, double tpmPercentage,
+                                   int rpmUsed, int rpmLimit, double rpmPercentage,
+                                   Long pauseDurationMs, Long windowRemainingMs,
+                                   String message) {
+        try {
+            RateLimitEvent event = RateLimitEvent.builder()
+                    .eventType(eventType)
+                    .eventTimestamp(Instant.now())
+                    .tpmUsed(tpmUsed)
+                    .tpmLimit(tpmLimit)
+                    .tpmPercentage(tpmPercentage)
+                    .rpmUsed(rpmUsed)
+                    .rpmLimit(rpmLimit)
+                    .rpmPercentage(rpmPercentage)
+                    .pauseDurationMs(pauseDurationMs)
+                    .windowRemainingMs(windowRemainingMs)
+                    .message(message)
+                    .build();
+            rateLimitEventRepository.save(event);
+        } catch (Exception e) {
+            // Don't fail rate limiting if DB logging fails
+            log.error("Failed to log rate limit event to database", e);
+        }
+    }
 }
