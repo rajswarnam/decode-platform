@@ -4,6 +4,12 @@ server:
 spring:
   application:
     name: llm-gateway-service
+  autoconfigure:
+    exclude:
+      # Exclude Spring AI Azure OpenAI auto-configuration
+      # We use InternalLlmClientService with RestTemplate instead
+      - org.springframework.ai.autoconfigure.azure.openai.AzureOpenAiAutoConfiguration
+      - org.springframework.ai.autoconfigure.azure.openai.AzureOpenAiChatAutoConfiguration
 
 # LLM Gateway Rate Limiting Configuration
 llm:
@@ -14,16 +20,6 @@ llm:
   retry:
     max-attempts: 3      # Max retry attempts for 429 errors
     initial-delay-ms: 3000  # Initial delay for 429 retry (exponential backoff: 3s, 6s, 12s)
-  ai:
-    azure:
-      openai:
-        api-key: ${AZURE_OPENAI_KEY}
-        endpoint: ${AZURE_OPENAI_ENDPOINT}
-        deployment-name: ${AZURE_OPENAI_DEPLOYMENT} # Global
-        chat:
-          options:
-            deployment-name: ${AZURE_OPENAI_DEPLOYMENT} # Chat Specific
-            temperature: 0.7
 azure:
   ad:
     tenant-id: ${AZURE_AD_TENANT_ID}
