@@ -47,14 +47,46 @@ public class VectorizerService {
     private void vectorizeSymbols(List<Symbol> symbols) {
         log.info("Found {} symbols to vectorize", symbols.size());
 
-        List<Document> documents = new ArrayList<>();
+        if (symbols.isEmpty()) {
+            log.warn("⚠️ No symbols found to vectorize. Check if symbols were saved to database during parsing.");
+            return;
+        }
+
+        // Filter out symbols that are already vectorized by checking Qdrant
+        // Qdrant's add() method will create duplicates, so we need to check first
+        List<Document> documentsToAdd = new ArrayList<>();
+        int alreadyVectorizedCount = 0;
+        
         for (Symbol symbol : symbols) {
+            String symbolId = symbol.getId().toString();
+            
+            // Check if this symbol is already in Qdrant by searching for it using symbol_id metadata
+            try {
+                var searchRequest = org.springframework.ai.vectorstore.SearchRequest.builder()
+                    .query("") // Empty query - we're just checking existence
+                    .topK(1)
+                    .filterExpression("symbol_id == '" + symbolId + "'")
+                    .build();
+                
+                var existingDocs = vectorStore.similaritySearch(searchRequest);
+                
+                if (!existingDocs.isEmpty()) {
+                    // Symbol already exists in Qdrant - skip it
+                    alreadyVectorizedCount++;
+                    continue;
+                }
+            } catch (Exception e) {
+                // If filter/search fails, log and continue (might be first run or Qdrant issue)
+                log.debug("Could not check if symbol {} exists in Qdrant: {}. Will add it.", symbolId, e.getMessage());
+            }
+            
+            // Symbol doesn't exist - prepare it for vectorization
             String domain = symbol.getSourceFile().getProject().getDomain();
             String projectName = symbol.getSourceFile().getProject().getName();
             String category = symbol.getCategory();
             String name = symbol.getName();
 
-            // Construct semantic text for embedding - prevens collision (e.g. Account in
+            // Construct semantic text for embedding - prevents collision (e.g. Account in
             // Credit vs Mortgage)
             String content = String.format(
                     "Domain: %s | Project: %s | Category: %s | Symbol: %s",
@@ -65,20 +97,25 @@ public class VectorizerService {
 
             // Create Document with metadata for filtering
             Document doc = new Document(content);
-            doc.getMetadata().put("symbol_id", symbol.getId().toString());
+            doc.getMetadata().put("symbol_id", symbolId);
             doc.getMetadata().put("project_id", symbol.getSourceFile().getProject().getId().toString());
             doc.getMetadata().put("domain", domain != null ? domain : "General");
             doc.getMetadata().put("name", name);
             doc.getMetadata().put("file_path", symbol.getSourceFile().getFilePath());
 
-            documents.add(doc);
+            documentsToAdd.add(doc);
         }
 
-        if (!documents.isEmpty()) {
-            vectorStore.add(documents);
-            log.info("Successfully vectorized {} symbols to Qdrant (Target collection: symbols)", documents.size());
+        if (!documentsToAdd.isEmpty()) {
+            vectorStore.add(documentsToAdd);
+            log.info("✅ Successfully vectorized {} new symbols to Qdrant (Target collection: symbols). {} symbols were already vectorized.", 
+                    documentsToAdd.size(), alreadyVectorizedCount);
         } else {
-            log.warn("No symbols found to vectorize.");
+            if (alreadyVectorizedCount > 0) {
+                log.info("ℹ️ All {} symbols were already vectorized. No new symbols to add.", alreadyVectorizedCount);
+            } else {
+                log.warn("⚠️ No symbols found to vectorize. Check if symbols were saved to database during parsing.");
+            }
         }
     }
 }
