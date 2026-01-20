@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: llm-gateway-service
+
+logging:
+  level:
+    com.decode.gateway.service.InternalLlmClientService: INFO
+    com.decode.gateway.service.DataPrivacyFilterService: INFO
   autoconfigure:
     exclude:
       # Explicitly exclude any Spring AI Azure OpenAI auto-configuration

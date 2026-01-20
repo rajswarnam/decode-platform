@@ -174,6 +174,14 @@ public class DataPrivacyFilterService {
         // Log if any redactions were made
         if (totalRedactions > 0) {
             log.warn("🔒 Data Privacy Filter: Redacted {} sensitive data pattern(s) from message", totalRedactions);
+            log.info("📋 Original Message Length: {} chars, Filtered Message Length: {} chars", 
+                    originalMessage.length(), filtered.length());
+            if (!originalMessage.equals(filtered)) {
+                log.info("📋 Original Message (first 500 chars): {}", 
+                        originalMessage.length() > 500 ? originalMessage.substring(0, 500) + "..." : originalMessage);
+                log.info("📋 Filtered Message (first 500 chars): {}", 
+                        filtered.length() > 500 ? filtered.substring(0, 500) + "..." : filtered);
+            }
         }
 
         return filtered;
