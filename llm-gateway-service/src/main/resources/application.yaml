@@ -4,6 +4,15 @@ server:
 spring:
   application:
     name: llm-gateway-service
+  autoconfigure:
+    exclude:
+      # Explicitly exclude any Spring AI Azure OpenAI auto-configuration
+      # We use InternalLlmClientService (RestTemplate) instead
+      - org.springframework.ai.autoconfigure.azure.openai.AzureOpenAiAutoConfiguration
+      - org.springframework.ai.autoconfigure.azure.openai.AzureOpenAiChatAutoConfiguration
+      - org.springframework.ai.model.azure.openai.autoconfigure.AzureOpenAIClientBuilderConfiguration
+      # Exclude by pattern to catch any variations
+      - org.springframework.ai.**.azure.openai.**.*
 
 # LLM Gateway Rate Limiting Configuration
 llm:
