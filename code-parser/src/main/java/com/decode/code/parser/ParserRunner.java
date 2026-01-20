@@ -39,9 +39,18 @@ public class ParserRunner implements CommandLineRunner {
     private final ParserOrchestratorService parserService;
     private final SymbolRepository symbolRepository;
 
+    @Value("${parser.auto-parse-on-startup:false}")
+    private boolean autoParseOnStartup;
+
     @Override
     @Transactional
     public void run(String... args) throws Exception {
+        if (!autoParseOnStartup) {
+            log.info("Parser auto-parse on startup is disabled by configuration.");
+            log.info("Projects will be parsed during ingestion or can be triggered manually via API.");
+            return;
+        }
+
         log.info("--- Starting Code Parser Batch Job (Cloud-Native Mode) ---");
 
         List<Project> projects = projectRepository.findAll();

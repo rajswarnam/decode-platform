@@ -25,3 +25,10 @@ minio:
   access-key: minioadmin
   secret-key: minioadmin
   bucket: decode-source-code
+
+# Parser configuration
+parser:
+  # Auto-parse all projects on startup (default: false)
+  # Set to true if you want parsing to run automatically on every startup
+  # Recommended: false - projects will be parsed during ingestion or via API
+  auto-parse-on-startup: false
