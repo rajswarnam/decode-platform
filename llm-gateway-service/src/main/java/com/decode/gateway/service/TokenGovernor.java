@@ -18,11 +18,11 @@ public class TokenGovernor {
     @Value("${llm.governor.tpm-limit:250000}")
     private int tpmLimit = 250_000; // User has 250k TPM quota
 
-    @Value("${llm.governor.rpm-limit:5000}")
-    private int rpmLimit = 5_000; // Conservative RPM limit (50k RPM typical, but conservative for safety)
+    @Value("${llm.governor.rpm-limit:3000}")
+    private int rpmLimit = 3_000; // Conservative RPM limit (3000 requests/min = 50 requests/sec)
 
-    @Value("${llm.governor.min-request-delay-ms:100}")
-    private long minRequestDelayMs = 100; // Minimum 100ms between requests to prevent rapid-fire
+    @Value("${llm.governor.min-request-delay-ms:200}")
+    private long minRequestDelayMs = 200; // Minimum 200ms between requests (5 req/sec max)
 
     private final EncodingRegistry registry = Encodings.newDefaultEncodingRegistry();
     private final Encoding encoding = registry.getEncoding(EncodingType.CL100K_BASE);

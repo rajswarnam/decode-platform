@@ -37,8 +37,8 @@ public class InternalLlmClientService {
     @Value("${llm.retry.max-attempts:3}")
     private int maxRetryAttempts = 3;
 
-    @Value("${llm.retry.initial-delay-ms:1000}")
-    private long initialRetryDelayMs = 1000;
+    @Value("${llm.retry.initial-delay-ms:3000}")
+    private long initialRetryDelayMs = 3000; // Start with 3s delay for 429 errors
 
     /**
      * Call internal LLM gateway for streaming response.
@@ -406,20 +406,22 @@ public class InternalLlmClientService {
                 );
                 return response;
             } catch (HttpClientErrorException e) {
-                if (e.getStatusCode().value() == 429 && attempt < maxRetryAttempts - 1) {
+                int statusCode = e.getStatusCode().value();
+                // Handle both 429 (Too Many Requests) and 420 (Rate Limited) errors
+                if ((statusCode == 429 || statusCode == 420) && attempt < maxRetryAttempts - 1) {
                     attempt++;
-                    log.warn("Rate limit (429) encountered. Retrying in {} ms (attempt {}/{})", 
-                            delay, attempt, maxRetryAttempts);
+                    log.warn("Rate limit ({}) encountered. Retrying in {} ms (attempt {}/{})", 
+                            statusCode, delay, attempt, maxRetryAttempts);
                     try {
                         Thread.sleep(delay);
                     } catch (InterruptedException ie) {
                         Thread.currentThread().interrupt();
                         throw new RuntimeException("Retry interrupted", ie);
                     }
-                    // Exponential backoff: double the delay for next retry
+                    // Exponential backoff: double the delay for next retry (3s -> 6s -> 12s)
                     delay *= 2;
                 } else {
-                    // If not 429 or max retries reached, rethrow
+                    // If not 429/420 or max retries reached, rethrow
                     throw e;
                 }
             }
