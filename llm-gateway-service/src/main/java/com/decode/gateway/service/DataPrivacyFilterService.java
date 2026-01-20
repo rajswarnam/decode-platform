@@ -30,11 +30,7 @@ public class DataPrivacyFilterService {
     @Value("${llm.privacy.filter.replacement:[REDACTED]}")
     private String replacementText;
 
-    @Value("${llm.privacy.filter.patterns:#{T(java.util.Arrays).asList(" +
-            "'\\\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\\\\b'," + // Credit Card
-            "'\\\\b(?!000)(?!666)(?!9)[0-9]{3}[- ]?(?!00)[0-9]{2}[- ]?(?!0000)[0-9]{4}\\\\b'," + // SSN
-            "'\\\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\\\.[A-Z|a-z]{2,}\\\\b'" + // Email (optional, can be disabled)
-            ")}")
+    @Value("${llm.privacy.filter.patterns:}")
     private List<String> customPatterns;
 
     // Built-in patterns (always enabled if filterEnabled=true)
