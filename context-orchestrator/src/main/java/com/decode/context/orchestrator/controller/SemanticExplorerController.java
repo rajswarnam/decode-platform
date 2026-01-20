@@ -429,7 +429,7 @@ public class SemanticExplorerController {
                         java.io.ByteArrayInputStream contentStream = new java.io.ByteArrayInputStream(contentBytes);
 
                         PutObjectArgs putArgs = PutObjectArgs.builder()
-                                        .bucket("decode-bucket")
+                                        .bucket(bucketName)
                                         .object(newPath)
                                         .stream(contentStream, contentBytes.length, -1)
                                         .contentType("text/markdown")
