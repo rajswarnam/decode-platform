@@ -70,17 +70,15 @@ public class AclfParserService implements LanguageParser {
                 // XML format - use existing XML parser
                 log.debug("ACLF file {} appears to be XML format", file.getName());
                 JsonNode root = xmlMapper.readTree(content);
+                // Navigate to Detail nodes (assuming a standard structure)
+                // Note: Structure can vary, so we search for nodes named 'ExternalXML.Detail'
+                // or similar
                 findAndProcessDetails(root, file, tags);
             } else {
                 // DSL format - parse using regex/LLM hybrid approach
                 log.info("ACLF file {} appears to be DSL format (not XML). Attempting DSL parsing...", file.getName());
                 parseDslFormat(content, file, tags);
             }
-
-            // Navigate to Detail nodes (assuming a standard structure)
-            // Note: Structure can vary, so we search for nodes named 'ExternalXML.Detail'
-            // or similar
-            findAndProcessDetails(root, file, tags);
 
         } catch (com.fasterxml.jackson.core.JsonParseException e) {
             // This includes WstxUnexpectedCharException (from Woodstox XML parser, wrapped by Jackson)
