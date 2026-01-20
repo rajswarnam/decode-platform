@@ -53,10 +53,14 @@ public class ParserOrchestratorService {
     public void processProject(Project project) {
         try {
             log.info("triggering parsing for project: {}", project.getName());
-            processProjectFromMinio(project);
+            boolean symbolsFound = processProjectFromMinio(project);
             
-            // CHAIN: Trigger Vectorizer
-            triggerVectorizer(project);
+            // CHAIN: Trigger Vectorizer only if symbols were actually parsed
+            if (symbolsFound) {
+                triggerVectorizer(project);
+            } else {
+                log.info("No symbols found for project: {}. Skipping vectorizer trigger.", project.getName());
+            }
         } catch (Exception e) {
             log.error("Parsing failed for project {}", project.getName(), e);
         }
@@ -167,7 +171,7 @@ public class ParserOrchestratorService {
         }
     }
 
-    private void processProjectFromMinio(Project project) throws Exception {
+    private boolean processProjectFromMinio(Project project) throws Exception {
         String projectPrefix = project.getId().toString();
         log.info("Scanning MinIO Bucket '{}' for Project: {} (Prefix: {})", bucketName, project.getName(), projectPrefix);
 
@@ -212,8 +216,11 @@ public class ParserOrchestratorService {
             }
         }
 
+        boolean symbolsFound = filesWithSymbols > 0;
         log.info("✅ Parsing completed for project: {} | Total files: {} | Processed: {} ({} with symbols) | Ignored: {} | Skipped: {}", 
                 project.getName(), totalFiles, filesProcessed, filesWithSymbols, filesIgnored, filesSkipped);
+        
+        return symbolsFound;
     }
 
     private boolean processMinioObject(Project project, String objectKey) {
