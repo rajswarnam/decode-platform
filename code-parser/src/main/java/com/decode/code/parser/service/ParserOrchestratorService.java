@@ -63,8 +63,16 @@ public class ParserOrchestratorService {
     }
 
     private void triggerVectorizer(Project project) {
-        int maxRetries = 5; // Increased retries for startup scenarios
-        int retryDelayMs = 3000; // 3 seconds between retries
+        // First, check if vectorizer service is healthy/ready
+        if (!isVectorizerServiceReady()) {
+            log.warn("Vectorizer service is not ready. Skipping trigger for project: {}. " +
+                    "Files are parsed but NOT vectorized. Vectorizer will process on next ingestion or manual trigger.",
+                    project.getName());
+            return;
+        }
+        
+        int maxRetries = 3; // Reduced retries since we check readiness first
+        int retryDelayMs = 2000; // 2 seconds between retries
         
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
@@ -80,7 +88,7 @@ public class ParserOrchestratorService {
                     log.warn("Vectorizer returned non-2xx status: {}", response.getStatusCode());
                 }
             } catch (org.springframework.web.client.ResourceAccessException e) {
-                // Connection refused or service not ready - common during startup
+                // Connection refused or service not ready
                 if (attempt < maxRetries) {
                     log.warn("Vectorizer service not ready (attempt {}/{}), retrying in {}ms: {}", 
                             attempt, maxRetries, retryDelayMs, e.getMessage());
@@ -103,6 +111,39 @@ public class ParserOrchestratorService {
                 }
                 break; // Don't retry for other exceptions
             }
+        }
+    }
+    
+    /**
+     * Check if vectorizer service is ready/healthy
+     * Tries to connect to health endpoint or trigger endpoint
+     */
+    private boolean isVectorizerServiceReady() {
+        try {
+            // Try health endpoint first (if available)
+            String healthUrl = vectorizerUrl.replace("/api/vectorizer", "") + "/actuator/health";
+            try {
+                ResponseEntity<String> healthResponse = restTemplate.getForEntity(healthUrl, String.class);
+                if (healthResponse.getStatusCode().is2xxSuccessful()) {
+                    log.debug("Vectorizer service health check passed");
+                    return true;
+                }
+            } catch (Exception e) {
+                log.debug("Health endpoint not available, trying direct connection");
+            }
+            
+            // Fallback: Try a simple GET to the base URL
+            String baseUrl = vectorizerUrl.replace("/api/vectorizer", "");
+            try {
+                restTemplate.getForEntity(baseUrl, String.class);
+                return true;
+            } catch (Exception e) {
+                log.debug("Vectorizer service not reachable: {}", e.getMessage());
+                return false;
+            }
+        } catch (Exception e) {
+            log.debug("Error checking vectorizer service readiness: {}", e.getMessage());
+            return false;
         }
     }
 
