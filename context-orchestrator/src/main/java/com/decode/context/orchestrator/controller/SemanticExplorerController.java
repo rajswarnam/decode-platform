@@ -52,6 +52,9 @@ public class SemanticExplorerController {
         private final BlueprintRefinementRepository blueprintRefinementRepository;
         private final BlueprintService blueprintService; // Restored as requested
         private final StitchService stitchService;
+        
+        @org.springframework.beans.factory.annotation.Value("${minio.bucket}")
+        private String bucketName;
 
         @GetMapping("/blueprint")
         public ResponseEntity<String> generateBlueprint(@RequestParam String projectName) {
@@ -159,7 +162,7 @@ public class SemanticExplorerController {
                         userMetadata.put("query", query);
 
                         PutObjectArgs putArgs = PutObjectArgs.builder()
-                                        .bucket("decode-bucket")
+                                        .bucket(bucketName)
                                         .object(objectKey)
                                         .stream(stream, contentBytes.length, -1)
                                         .contentType("text/markdown")
@@ -196,7 +199,7 @@ public class SemanticExplorerController {
                         List<Map<String, Object>> blueprints = new java.util.ArrayList<>();
 
                         io.minio.ListObjectsArgs listArgs = io.minio.ListObjectsArgs.builder()
-                                        .bucket("decode-bucket")
+                                        .bucket(bucketName)
                                         .prefix(prefix)
                                         .recursive(true) // Recursively list all files in subfolders
                                         .build();
@@ -238,7 +241,7 @@ public class SemanticExplorerController {
         public ResponseEntity<String> getBlueprint(@RequestParam String path) {
                 try {
                         io.minio.GetObjectArgs getArgs = io.minio.GetObjectArgs.builder()
-                                        .bucket("decode-bucket")
+                                        .bucket(bucketName)
                                         .object(path)
                                         .build();
 
@@ -361,7 +364,7 @@ public class SemanticExplorerController {
 
                         // STEP 1: Load existing blueprint from MinIO
                         io.minio.GetObjectArgs getArgs = io.minio.GetObjectArgs.builder()
-                                        .bucket("decode-bucket")
+                                        .bucket(bucketName)
                                         .object(blueprintPath)
                                         .build();
 
@@ -374,7 +377,7 @@ public class SemanticExplorerController {
 
                                 // Get metadata from MinIO object
                                 io.minio.StatObjectArgs statArgs = io.minio.StatObjectArgs.builder()
-                                                .bucket("decode-bucket")
+                                                .bucket(bucketName)
                                                 .object(blueprintPath)
                                                 .build();
                                 io.minio.StatObjectResponse stat = minioClient.statObject(statArgs);
