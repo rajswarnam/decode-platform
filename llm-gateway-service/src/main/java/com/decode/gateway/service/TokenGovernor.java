@@ -24,6 +24,9 @@ public class TokenGovernor {
     @Value("${llm.governor.min-request-delay-ms:200}")
     private long minRequestDelayMs = 200; // Minimum 200ms between requests (5 req/sec max)
 
+    @Value("${llm.governor.tpm-pause-threshold:220000}")
+    private int tpmPauseThreshold = 220_000; // Pause when reaching 220k tokens (88% of 250k limit)
+
     private final EncodingRegistry registry = Encodings.newDefaultEncodingRegistry();
     private final Encoding encoding = registry.getEncoding(EncodingType.CL100K_BASE);
 
@@ -57,9 +60,30 @@ public class TokenGovernor {
             resetTokenBucket();
         }
 
-        // TPM limiting: Check if we've exceeded token rate limit
+        // TPM limiting: Proactive pause when approaching limit (before hitting it)
         int currentTokens = tokensUsedInCurrentMinute.get();
-        if (currentTokens + estimatedTokens > tpmLimit) {
+        int projectedTokens = currentTokens + estimatedTokens;
+        
+        // PROACTIVE PAUSE: If we're approaching the limit (>= pause threshold), wait before making request
+        if (projectedTokens >= tpmPauseThreshold && projectedTokens < tpmLimit) {
+            long windowRemainingMs = 60000 - (now - windowStartTimestamp);
+            double tpmPercent = (projectedTokens * 100.0) / tpmLimit;
+            log.warn("⏸️ TPM PAUSE THRESHOLD: {}/{} tokens ({:.1f}%) approaching limit. Pausing for {} ms to prevent 429...", 
+                    projectedTokens, tpmLimit, tpmPercent, windowRemainingMs);
+            log.warn("📊 Rate Limit Stats - RPM: {}/{}, TPM: {}/{}, Window remaining: {} ms", 
+                    currentRequests, rpmLimit,
+                    projectedTokens, tpmLimit,
+                    windowRemainingMs);
+            sleep(windowRemainingMs);
+            resetTokenBucket();
+            // Recalculate after reset
+            now = System.currentTimeMillis();
+            currentTokens = 0;
+            projectedTokens = estimatedTokens;
+        }
+        
+        // TPM limiting: Check if we've exceeded token rate limit (final check)
+        if (projectedTokens > tpmLimit) {
             long sleepTime = 60000 - (now - windowStartTimestamp);
             double tpmPercent = (currentTokens * 100.0) / tpmLimit;
             log.warn("⚠️ TPM LIMIT REACHED: {}/{} tokens ({:.1f}%) in current minute window. Pausing for {} ms...", 
@@ -70,6 +94,10 @@ public class TokenGovernor {
                     sleepTime);
             sleep(sleepTime);
             resetTokenBucket();
+            // Recalculate after reset
+            now = System.currentTimeMillis();
+            currentTokens = 0;
+            projectedTokens = estimatedTokens;
         }
         
         // Log consumption when hitting warning thresholds (80% and 90%)
@@ -77,10 +105,14 @@ public class TokenGovernor {
         double tokenPercent = (newTokenCount * 100.0) / tpmLimit;
         double requestPercent = ((currentRequests + 1) * 100.0) / rpmLimit;
         
+        // Update warning thresholds to be more conservative
         if (tokenPercent >= 90 && tokenPercent < 95) {
-            log.warn("⚠️ TPM WARNING: {}/{} tokens ({:.1f}%) - Approaching limit!", 
+            log.warn("⚠️ TPM WARNING: {}/{} tokens ({:.1f}%) - Approaching limit! Consider pausing.", 
                     newTokenCount, tpmLimit, tokenPercent);
-        } else if (tokenPercent >= 80 && tokenPercent < 90) {
+        } else if (tokenPercent >= 88 && tokenPercent < 90) {
+            log.warn("⏸️ TPM APPROACHING PAUSE: {}/{} tokens ({:.1f}%) - Will pause at {} tokens", 
+                    newTokenCount, tpmLimit, tokenPercent, tpmPauseThreshold);
+        } else if (tokenPercent >= 80 && tokenPercent < 88) {
             log.info("ℹ️ TPM WARNING: {}/{} tokens ({:.1f}%) - High consumption", 
                     newTokenCount, tpmLimit, tokenPercent);
         }
