@@ -64,12 +64,31 @@ public class AclfParserService implements LanguageParser {
                 return tags;
             }
             
+            // Validate XML structure before attempting to parse
+            // XML must start with '<' or have a BOM (Byte Order Mark)
             if (!trimmedContent.startsWith("<")) {
-                log.warn("ACLF file {} does not appear to be valid XML (does not start with '<'). First 100 chars: {}", 
-                        file.getName(), trimmedContent.substring(0, Math.min(100, trimmedContent.length())));
-                // Try to parse anyway - might be valid XML with leading whitespace or BOM
+                // Check for BOM (UTF-8 BOM is 0xEF 0xBB 0xBF, which appears as characters)
+                boolean hasBom = content.length() >= 3 && 
+                    (content.charAt(0) == '\uFEFF' || // UTF-8 BOM
+                     (content.charAt(0) == '\uFFFE' && content.length() >= 2)); // UTF-16 BOM
+                
+                if (!hasBom) {
+                    log.error("ACLF file {} does not appear to be valid XML (does not start with '<'). " +
+                            "First 100 chars: {}. Skipping XML parsing to avoid WstxUnexpectedCharException.", 
+                            file.getName(), trimmedContent.substring(0, Math.min(100, trimmedContent.length())));
+                    return tags; // Skip parsing - return empty list
+                } else {
+                    log.info("ACLF file {} has BOM, attempting to parse after BOM removal", file.getName());
+                    // Remove BOM and try again
+                    content = content.replaceFirst("^\uFEFF", "").replaceFirst("^\uFFFE", "").trim();
+                    if (!content.startsWith("<")) {
+                        log.error("ACLF file {} still doesn't start with '<' after BOM removal. Skipping.", file.getName());
+                        return tags;
+                    }
+                }
             }
             
+            // Now safe to parse - we've validated it starts with '<'
             JsonNode root = xmlMapper.readTree(content);
 
             // Navigate to Detail nodes (assuming a standard structure)
@@ -78,8 +97,21 @@ public class AclfParserService implements LanguageParser {
             findAndProcessDetails(root, file, tags);
 
         } catch (com.fasterxml.jackson.core.JsonParseException e) {
-            log.error("Failed to parse ACLF file as XML: {} - {}. File may not be valid XML or may have encoding issues.", 
-                    file.getAbsolutePath(), e.getMessage());
+            // This includes WstxUnexpectedCharException (from Woodstox XML parser)
+            String errorMsg = e.getMessage();
+            if (errorMsg != null && errorMsg.contains("Unexpected character")) {
+                log.error("ACLF file {} has invalid XML structure (unexpected character in prolog). " +
+                        "This usually means the file is not valid XML or starts with unexpected characters. " +
+                        "Error: {}. Skipping this file.", file.getAbsolutePath(), errorMsg);
+            } else {
+                log.error("Failed to parse ACLF file as XML: {} - {}. File may not be valid XML or may have encoding issues.", 
+                        file.getAbsolutePath(), errorMsg);
+            }
+            // Return empty list to allow other files to be processed
+        } catch (com.ctc.wstx.exc.WstxUnexpectedCharException e) {
+            // Explicitly catch Woodstox exception (though it should be caught by JsonParseException above)
+            log.error("ACLF file {} caused WstxUnexpectedCharException: {}. " +
+                    "File does not appear to be valid XML. Skipping.", file.getAbsolutePath(), e.getMessage());
             // Return empty list to allow other files to be processed
         } catch (Exception e) {
             log.error("Failed to parse ACLF file: {} - {}", file.getAbsolutePath(), e.getMessage(), e);
