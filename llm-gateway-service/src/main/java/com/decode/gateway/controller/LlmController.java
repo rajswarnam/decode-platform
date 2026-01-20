@@ -40,9 +40,27 @@ public class LlmController {
                 .reduce((first, second) -> second)
                 .orElse("");
 
-        tokenGovernor.acquireTokenBudget(userMessage);
-
         SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
+        
+        // Set up progress callback for rate limit pauses (sends keep-alive to UI)
+        tokenGovernor.setPauseProgressCallback(progressMessage -> {
+            try {
+                // Send progress as a special SSE event that UI can display
+                Map<String, Object> progressChunk = new HashMap<>();
+                progressChunk.put("type", "rate_limit_progress");
+                progressChunk.put("message", progressMessage);
+                emitter.send(SseEmitter.event()
+                        .name("progress")
+                        .data(objectMapper.writeValueAsString(progressChunk)));
+            } catch (Exception e) {
+                log.debug("Error sending rate limit progress update", e);
+            }
+        });
+
+        tokenGovernor.acquireTokenBudget(userMessage);
+        
+        // Clear callback after token budget acquired
+        tokenGovernor.setPauseProgressCallback(null);
         String requestId = "chatcmpl-" + UUID.randomUUID().toString();
         long created = System.currentTimeMillis() / 1000;
 
@@ -122,6 +140,26 @@ public class LlmController {
             SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
             String requestId = "chatcmpl-" + UUID.randomUUID().toString();
             long created = System.currentTimeMillis() / 1000;
+
+            // Set up progress callback for rate limit pauses (sends keep-alive to UI)
+            tokenGovernor.setPauseProgressCallback(progressMessage -> {
+                try {
+                    // Send progress as a special SSE event that UI can display
+                    Map<String, Object> progressChunk = new HashMap<>();
+                    progressChunk.put("type", "rate_limit_progress");
+                    progressChunk.put("message", progressMessage);
+                    emitter.send(SseEmitter.event()
+                            .name("progress")
+                            .data(objectMapper.writeValueAsString(progressChunk)));
+                } catch (Exception e) {
+                    log.debug("Error sending rate limit progress update", e);
+                }
+            });
+
+            tokenGovernor.acquireTokenBudget(userMessage);
+            
+            // Clear callback after token budget acquired
+            tokenGovernor.setPauseProgressCallback(null);
 
             // Process streaming chunks asynchronously
             internalLlmClientService.streamCompletion(userMessage, request.getModel(), true)

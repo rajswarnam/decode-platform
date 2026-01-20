@@ -35,6 +35,20 @@ public class TokenGovernor {
     private long windowStartTimestamp = System.currentTimeMillis();
     private long lastRequestTimestamp = 0;
 
+    /**
+     * Optional callback for progress updates during rate limit pauses.
+     * Set by InternalLlmClientService to send keep-alive messages to UI.
+     */
+    private java.util.function.Consumer<String> pauseProgressCallback = null;
+
+    /**
+     * Set callback for progress updates during rate limit pauses.
+     * This allows the UI to receive keep-alive messages during long pauses.
+     */
+    public void setPauseProgressCallback(java.util.function.Consumer<String> callback) {
+        this.pauseProgressCallback = callback;
+    }
+
     public synchronized void acquireTokenBudget(String text) {
         int estimatedTokens = encoding.encode(text).size() + 100; // Buffer for overhead
 
@@ -74,7 +88,35 @@ public class TokenGovernor {
                     currentRequests, rpmLimit,
                     projectedTokens, tpmLimit,
                     windowRemainingMs);
-            sleep(windowRemainingMs);
+            
+            // Send progress updates during pause to keep UI connection alive
+            if (pauseProgressCallback != null) {
+                long pauseSeconds = windowRemainingMs / 1000;
+                pauseProgressCallback.accept(String.format("⏸️ Rate Limit: Pausing for %d seconds (TPM: %.1f%%). Resetting token window...", 
+                        pauseSeconds, tpmPercent));
+            }
+            
+            // Sleep in chunks and send periodic keep-alive messages
+            long chunkSize = 5000; // 5 seconds
+            long remaining = windowRemainingMs;
+            int chunkCount = 0;
+            while (remaining > 0) {
+                long sleepTime = Math.min(chunkSize, remaining);
+                sleep(sleepTime);
+                remaining -= sleepTime;
+                chunkCount++;
+                
+                // Send keep-alive every 5 seconds
+                if (pauseProgressCallback != null && remaining > 0) {
+                    long remainingSeconds = remaining / 1000;
+                    pauseProgressCallback.accept(String.format("⏳ Waiting for rate limit window reset... %d seconds remaining", remainingSeconds));
+                }
+            }
+            
+            if (pauseProgressCallback != null) {
+                pauseProgressCallback.accept("✅ Rate limit window reset. Resuming requests...");
+            }
+            
             resetTokenBucket();
             // Recalculate after reset
             now = System.currentTimeMillis();
@@ -92,7 +134,33 @@ public class TokenGovernor {
                     currentRequests, rpmLimit,
                     currentTokens, tpmLimit,
                     sleepTime);
-            sleep(sleepTime);
+            
+            // Send progress updates during pause to keep UI connection alive
+            if (pauseProgressCallback != null) {
+                long pauseSeconds = sleepTime / 1000;
+                pauseProgressCallback.accept(String.format("⚠️ Rate Limit Exceeded: Pausing for %d seconds (TPM: %.1f%%). Resetting token window...", 
+                        pauseSeconds, tpmPercent));
+            }
+            
+            // Sleep in chunks and send periodic keep-alive messages
+            long chunkSize = 5000; // 5 seconds
+            long remaining = sleepTime;
+            while (remaining > 0) {
+                long sleepChunk = Math.min(chunkSize, remaining);
+                sleep(sleepChunk);
+                remaining -= sleepChunk;
+                
+                // Send keep-alive every 5 seconds
+                if (pauseProgressCallback != null && remaining > 0) {
+                    long remainingSeconds = remaining / 1000;
+                    pauseProgressCallback.accept(String.format("⏳ Waiting for rate limit window reset... %d seconds remaining", remainingSeconds));
+                }
+            }
+            
+            if (pauseProgressCallback != null) {
+                pauseProgressCallback.accept("✅ Rate limit window reset. Resuming requests...");
+            }
+            
             resetTokenBucket();
             // Recalculate after reset
             now = System.currentTimeMillis();
