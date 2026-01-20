@@ -45,13 +45,10 @@ public class LlmController {
         // Set up progress callback for rate limit pauses (sends keep-alive to UI)
         tokenGovernor.setPauseProgressCallback(progressMessage -> {
             try {
-                // Send progress as a special SSE event that UI can display
-                Map<String, Object> progressChunk = new HashMap<>();
-                progressChunk.put("type", "rate_limit_progress");
-                progressChunk.put("message", progressMessage);
+                // Send progress as plain text (UI expects plain text in progress events)
                 emitter.send(SseEmitter.event()
                         .name("progress")
-                        .data(objectMapper.writeValueAsString(progressChunk)));
+                        .data(progressMessage));
             } catch (Exception e) {
                 log.debug("Error sending rate limit progress update", e);
             }
