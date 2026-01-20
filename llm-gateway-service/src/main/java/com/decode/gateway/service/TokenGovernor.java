@@ -131,23 +131,27 @@ public class TokenGovernor {
         double requestPercent = (requests * 100.0) / rpmLimit;
         
         java.util.Map<String, Object> metrics = new java.util.HashMap<>();
-        metrics.put("tpm", Map.of(
-            "used", tokens,
-            "limit", tpmLimit,
-            "percentage", Math.round(tokenPercent * 100.0) / 100.0,
-            "remaining", tpmLimit - tokens
-        ));
-        metrics.put("rpm", Map.of(
-            "used", requests,
-            "limit", rpmLimit,
-            "percentage", Math.round(requestPercent * 100.0) / 100.0,
-            "remaining", rpmLimit - requests
-        ));
-        metrics.put("window", Map.of(
-            "startTimestamp", windowStartTimestamp,
-            "remainingMs", Math.max(0, windowRemainingMs),
-            "elapsedMs", now - windowStartTimestamp
-        ));
+        
+        java.util.Map<String, Object> tpm = new java.util.HashMap<>();
+        tpm.put("used", tokens);
+        tpm.put("limit", tpmLimit);
+        tpm.put("percentage", Math.round(tokenPercent * 100.0) / 100.0);
+        tpm.put("remaining", tpmLimit - tokens);
+        metrics.put("tpm", tpm);
+        
+        java.util.Map<String, Object> rpm = new java.util.HashMap<>();
+        rpm.put("used", requests);
+        rpm.put("limit", rpmLimit);
+        rpm.put("percentage", Math.round(requestPercent * 100.0) / 100.0);
+        rpm.put("remaining", rpmLimit - requests);
+        metrics.put("rpm", rpm);
+        
+        java.util.Map<String, Object> window = new java.util.HashMap<>();
+        window.put("startTimestamp", windowStartTimestamp);
+        window.put("remainingMs", Math.max(0, windowRemainingMs));
+        window.put("elapsedMs", now - windowStartTimestamp);
+        metrics.put("window", window);
+        
         metrics.put("lastRequestTimestamp", lastRequestTimestamp);
         
         return metrics;
