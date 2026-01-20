@@ -98,7 +98,9 @@ public class VectorizerService {
             // Create Document with metadata for filtering
             // IMPORTANT: Set document ID to symbol_id to prevent duplicates in Qdrant
             // Qdrant uses point IDs for uniqueness - same ID will overwrite, not create duplicate
-            Document doc = new Document(symbolId, content); // Use symbolId as document ID
+            Document doc = new Document(content);
+            // Set ID using metadata - Qdrant will use this as the point ID
+            doc.getMetadata().put("id", symbolId); // Qdrant uses "id" metadata as point ID
             doc.getMetadata().put("symbol_id", symbolId);
             doc.getMetadata().put("project_id", symbol.getSourceFile().getProject().getId().toString());
             doc.getMetadata().put("domain", domain != null ? domain : "General");
