@@ -565,8 +565,12 @@ public class InternalLlmClientService {
             
             // Truncate by encoding, truncating, then decoding
             // We'll truncate to slightly less than max to leave room for response
-            List<Integer> tokens = encoding.encode(message);
-            List<Integer> truncatedTokens = tokens.subList(0, maxInputTokens);
+            // jtokkit returns IntArrayList, we need to convert to List<Integer> for decode()
+            var tokens = encoding.encode(message);
+            List<Integer> truncatedTokens = new ArrayList<>();
+            for (int i = 0; i < maxInputTokens && i < tokens.size(); i++) {
+                truncatedTokens.add(tokens.get(i));
+            }
             String truncated = encoding.decode(truncatedTokens);
             
             int truncatedTokenCount = truncatedTokens.size();
