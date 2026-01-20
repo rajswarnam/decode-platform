@@ -32,28 +32,49 @@ This master plan outlines the strategic deployment of the Decode.AI platform, de
 ### Step 2.1: Multi-Module & Throttled Ingestion
 *   **Execution**: Coordinate Git clones and Zip uploads via the Ingestion Engine; support incremental subproject additions.
 *   **Requirement**: MinIO for file storage; Spring Batch for multi-threaded file processing.
+*   **File Ingestion Strategy**:
+    *   **Blacklist Approach**: Files are ingested by default unless explicitly excluded (binary, media, data, archive, temp files).
+    *   **Multi-Encoding Support**: Handles UTF-8, ISO-8859-1, Windows-1252 encodings to prevent `MalformedInputException`.
+    *   **MIME Type Detection**: For large unknown extension files, performs MIME type check to allow text-based files.
+    *   **Tech Stack Detection**: Automatically detects C/C++, ASP.NET, ACLF, Angular, COBOL, Java, Python, Node/React from source files.
 *   **Token Management**:
-    *   **TPM Governor Service**: Enforces a 200k TPM safety buffer (via tiktoken).
-    *   **Boilerplate Stripping**: Local agents must strip comments/imports before LLM summarization.
-    *   **Async Queueing**: Process tasks via a persistent Postgres queue with exponential backoff on 429 errors.
+    *   **TPM Governor Service**: Enforces 250k TPM limit with 220k proactive pause threshold (via jtokkit).
+    *   **RPM Limiting**: 3000 requests per minute with 200ms minimum delay between requests.
+    *   **Proactive Pause**: Pauses at 88% of TPM limit (220k) to prevent 429 errors, sends progress updates every 5s.
+    *   **HTTP Timeout**: 600s (10 minutes) to handle rate limit pauses (94s) + LLM calls (60s) + multiple workers.
+    *   **Retry Logic**: Exponential backoff for 429/420 errors (3s, 6s, 12s delays, max 3 attempts).
+    *   **Data Privacy Filtering**: Redacts sensitive data (Credit Card, SSN, ITIN, EIN, Bank Routing, Phone, IP) before LLM calls.
+*   **Async Queueing**: Process tasks via a persistent Postgres queue with exponential backoff on 429 errors.
 *   **Acceptance Criteria**: Successful file extraction and metadata logging for polyglot repositories.
 
 ### Step 2.2: Polyglot Code Parser (Agentic Service)
 *   **Execution**: Deploy a centralized `code-parser` agent implementing the **Polyglot Interface Pattern** (Rule 15).
 *   **Capabilities**:
-    *   **Automated Grammar Routing**: Dynamically select Tree-sitter grammars (Java, C, COBOL) based on file extension.
+    *   **Automated Grammar Routing**: Dynamically select Tree-sitter grammars (Java, C, COBOL, TypeScript) based on file extension.
     *   **Unified AST Storage**: Normalize symbols from all languages into the common `symbols` table.
-*   **Requirement**: Spring AI MCP with registered `@Tool` functions for each language (`parseJava`, `parseC`).
+    *   **Multi-Encoding Support**: Handles UTF-8, ISO-8859-1, Windows-1252 to prevent parsing errors.
+    *   **Robust Error Handling**: Gracefully handles null nodes, malformed code, and parsing exceptions.
+    *   **Duplicate Prevention**: Skips re-parsing projects that already have symbols (configurable via `parser.auto-parse-on-startup: false`).
+*   **ACLF Parsing**:
+    *   **Dual Format Support**: Handles both XML and DSL (Domain-Specific Language) formats.
+    *   **DSL Pattern Matching**: Extracts `ExternalDatalist`, `Datafield`, `Transaction`, `FormBlock`, `FormReport`, `Calculation` definitions.
+    *   **Pre-validation**: Validates XML format before parsing to prevent `WstxUnexpectedCharException`.
+*   **Requirement**: Spring AI MCP with registered `@Tool` functions for each language (`parseJava`, `parseC`, `parseAclf`).
 *   **Acceptance Criteria**: Single JVM process successfully parsing mixed-language repositories without restart.
-### Step 2.3: Vendor Interface & ACLF Mapping (Fusion Argo Tool)
-*   **Execution**: Implement `mapAclfToC` as a Tool within the Polyglot Parser agent.
-*   **Logic**: Parse `.ACLF` XML configuration and perform in-memory joining with C-Struct symbols to populate `aclf_mappings`.
-*   **Requirement**: Strict linkage between abstract Vendor Tags and physical Code Offsets.
-*   **Acceptance Criteria**: Automated generation of the "Attribute-to-Storage" lineage map.
+### Step 2.3: Vectorization & Embedding
+*   **Execution**: Deploy `vectorizer-service` to generate embeddings and store in Qdrant.
+*   **Capabilities**:
+    *   **Duplicate Prevention**: Uses deterministic IDs (`symbol_id` as Qdrant point ID) to prevent duplicate vectorization.
+    *   **Existence Check**: Verifies symbol already exists in Qdrant before adding (upsert behavior).
+    *   **Local ONNX Embeddings**: Uses `all-MiniLM-L6-v2` model (86MB) for query embedding.
+    *   **Startup Behavior**: Default `vectorizer.auto-vectorize-on-startup: false` to prevent duplicate work.
+*   **Requirement**: ONNX Runtime for embeddings, Qdrant for vector storage.
+*   **Acceptance Criteria**: Symbols vectorized once, retrievable via semantic search.
 
 ### Step 2.4: Vendor Interface & ACLF Mapping
 *   **Execution**: Deploy a **Config-to-Logic Agent** to parse `.ACLF` and vendor config files.
-*   **Requirement**: Map abstract attribute tags (e.g., `PRIMARY_OWNER`) to physical C structure offsets.
+*   **Logic**: Parse `.ACLF` XML/DSL configuration and perform in-memory joining with C-Struct symbols to populate `aclf_mappings`.
+*   **Requirement**: Strict linkage between abstract Vendor Tags and physical Code Offsets.
 *   **Acceptance Criteria**: Unified "Attribute-to-Storage" map linking configuration tags to source code symbols.
 
 ## Phase 3: Semantic Logic & Data Lineage
@@ -61,7 +82,12 @@ This master plan outlines the strategic deployment of the Decode.AI platform, de
 
 ### Step 3.1: Global Dictionary Mapping
 *   **Execution**: Use GPT-4o to semantic cluster extracted fields (e.g., mapping CUST-ID to customer_id).
-*   **Requirement**: Postgres Field_Aliases table for centralized metadata storage.
+*   **Capabilities**:
+    *   **Streaming Support**: Progress updates sent via SSE during dictionary population.
+    *   **Status Tracking**: Uses `analysis_status` column (PENDING, COMPLETED, FAILED) to track mapping progress.
+    *   **Batch Processing**: Processes symbols in batches with 300ms delay between LLM calls to respect rate limits.
+    *   **Startup Behavior**: Default `dictionary.auto-populate-on-startup: false` to prevent duplicate work.
+*   **Requirement**: Postgres `global_dictionary` table for centralized metadata storage (technical_name, business_name, domain, confidence_score).
 *   **Acceptance Criteria**: Cross-language variables mapped with high accuracy; human-in-the-loop override UI available.
 
 ### Step 3.2: Cross-Platform Lineage Extraction
@@ -79,6 +105,17 @@ This master plan outlines the strategic deployment of the Decode.AI platform, de
 
 ### Step 4.1: Use-Case Trace & Documentation
 *   **Execution**: Deploy a Context Orchestrator agent to synthesize business logic flows into Markdown documentation.
+*   **Agent Orchestration**:
+    *   **Dynamic Worker Selection**: Selects workers based on project tech stack (C/C++, ASP.NET, ACLF, Angular, COBOL, Java, React).
+    *   **Worker Personas**: BACKEND_JAVA, FRONTEND_REACT, DATABASE_SQL, LOGIC_EXTRACTOR, LEGACY_COBOL, BACKEND_C, BACKEND_ASPNET, CONFIG_ACLF, FRONTEND_HTML.
+    *   **Intent Detection**: BUSINESS queries prioritize LOGIC_EXTRACTOR and DATABASE_SQL; TECHNICAL queries use specialized workers.
+    *   **Iterative Refinement**: 1-4 iterations with QA checks, task refinement, and specialist spawning for gaps.
+*   **Quality Assurance**:
+    *   **Evidence Quality Scoring**: File coverage (0-5), task evidence percentage (0-3), iteration penalty (0-2).
+    *   **QA Checks**: Code evidence citations, file diversity, module coverage, evidence quality, SRE risks, business logic completeness.
+*   **Error Handling**:
+    *   **Graceful Degradation**: Returns partial results on interruption/timeout.
+    *   **InterruptedException Handling**: Detects interruptions via cause/message checks, restores thread status.
 *   **Requirement**: RAG (Retrieval-Augmented Generation) pipeline integrated with Qdrant and Postgres.
 *   **Acceptance Criteria**: Natural language queries yield accurate, cited explanations of business processes.
 

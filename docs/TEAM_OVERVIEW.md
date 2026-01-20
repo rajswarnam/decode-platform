@@ -98,6 +98,11 @@ The platform consists of **8 core services**:
 | **FRONTEND_REACT** | React/Angular frontend | Components, pages, state management |
 | **DATABASE_SQL** | Database schema | Tables, relationships, queries |
 | **LOGIC_EXTRACTOR** | Business logic discovery | Cross-cutting concerns, workflows |
+| **LEGACY_COBOL** | COBOL mainframe code | Programs, copybooks, data divisions |
+| **BACKEND_C** | C/C++ backend code | Source files, headers, data structures |
+| **BACKEND_ASPNET** | ASP.NET Web Forms | .aspx, code-behind, configurations |
+| **CONFIG_ACLF** | ACLF configuration | Data definitions, transaction flows, forms |
+| **FRONTEND_HTML** | HTML/Web content | HTML structure, CSS, JavaScript |
 | **LEGACY_COBOL** | COBOL/mainframe code | Data division, procedures |
 
 **What Workers Do**:
