@@ -45,7 +45,10 @@ spring:
         initialize-schema: false
   http:
     client:
-      read-timeout: 120s
+      # Increased timeouts to handle rate limit pauses (up to 95s) + LLM call time
+      # Rate limit pause can be up to 60s (full window reset), plus LLM calls can take 30-60s
+      # Total: 60s pause + 60s LLM call = 120s minimum, but we need buffer for multiple calls
+      read-timeout: 600s  # 10 minutes - handles rate limit pauses + multiple LLM calls
       connect-timeout: 60s
 
 minio:
