@@ -71,6 +71,15 @@ public class DataPrivacyFilterService {
         // Apply custom patterns from configuration
         if (customPatterns != null && !customPatterns.isEmpty()) {
             for (String patternStr : customPatterns) {
+                // Skip null, empty, or unresolved placeholder strings
+                if (patternStr == null || patternStr.trim().isEmpty()) {
+                    continue;
+                }
+                // Skip patterns that look like unresolved Spring placeholders
+                if (patternStr.startsWith("${") || patternStr.contains("${")) {
+                    log.debug("Skipping unresolved placeholder pattern: {}", patternStr);
+                    continue;
+                }
                 try {
                     Pattern pattern = Pattern.compile(patternStr);
                     int matches = countMatches(filtered, pattern);
@@ -79,8 +88,10 @@ public class DataPrivacyFilterService {
                         totalRedactions += matches;
                         log.debug("Applied custom pattern, redacted {} matches", matches);
                     }
+                } catch (java.util.regex.PatternSyntaxException e) {
+                    log.warn("Invalid regex pattern in configuration (skipping): {}", patternStr, e);
                 } catch (Exception e) {
-                    log.warn("Invalid regex pattern in configuration: {}", patternStr, e);
+                    log.warn("Error processing regex pattern (skipping): {}", patternStr, e);
                 }
             }
         }
