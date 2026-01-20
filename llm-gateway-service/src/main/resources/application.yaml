@@ -31,6 +31,10 @@ llm:
       # - Social Security Number (SSN) - 9 digits, format XXX-XX-XXXX
       # - Individual Taxpayer Identification Number (ITIN) - 9 digits starting with 9
       # - Employer Identification Number (EIN) - 9 digits, format XX-XXXXXXX
+      # - US Bank Routing Number (ABA) - 9 digits
+      # - Bank Account Numbers - 10-12 digits (when near banking keywords)
+      # - US Phone Numbers - 10 digits, various formats
+      # - IP Addresses (IPv4) - 4 octets format
       # Custom regex patterns (in addition to built-in patterns above)
       # Patterns are applied in order, use Java regex syntax
       patterns:

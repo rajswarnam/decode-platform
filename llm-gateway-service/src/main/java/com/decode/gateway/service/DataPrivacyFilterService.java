@@ -20,6 +20,10 @@ import java.util.regex.Matcher;
  * - Social Security Number (SSN) - 9 digits, format XXX-XX-XXXX
  * - Individual Taxpayer Identification Number (ITIN) - 9 digits starting with 9
  * - Employer Identification Number (EIN) - 9 digits, format XX-XXXXXXX
+ * - US Bank Routing Number (ABA) - 9 digits
+ * - Bank Account Numbers - 8-17 digits (when near banking keywords)
+ * - US Phone Numbers - 10 digits, various formats
+ * - IP Addresses (IPv4) - 4 octets format
  * 
  * Configurable via application.yaml:
  * - llm.privacy.filter.enabled: true/false
@@ -66,6 +70,34 @@ public class DataPrivacyFilterService {
         "\\b[0-9]{2}[- ]?[0-9]{7}\\b"
     );
 
+    // US Bank Routing Number (ABA) - 9 digits, format XXXXXXXX or XXXXX-XXXX
+    // Used for wire transfers, direct deposits, ACH transactions
+    // First digit must be 0-9, but typically starts with 0, 1, 2, or 3
+    private static final Pattern BANK_ROUTING_PATTERN = Pattern.compile(
+        "\\b[0-9]{9}\\b|\\b[0-9]{5}[- ]?[0-9]{4}\\b"
+    );
+
+    // Bank Account Number - 8-17 digits (varies by bank)
+    // More specific: 10-12 digits is most common for US accounts
+    // Note: This pattern is conservative to reduce false positives
+    // Consider enabling only if you see bank account numbers in your data
+    private static final Pattern BANK_ACCOUNT_PATTERN = Pattern.compile(
+        "\\b(?:account|acct|checking|savings)[\\s#:]*[0-9]{10,12}\\b"
+    );
+
+    // US Phone Number - 10 digits, various formats
+    // Format: (XXX) XXX-XXXX, XXX-XXX-XXXX, XXX.XXX.XXXX, or 10 consecutive digits
+    // Optional country code +1
+    private static final Pattern US_PHONE_PATTERN = Pattern.compile(
+        "\\b(?:\\+?1[-.]?)?\\(?([0-9]{3})\\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})\\b"
+    );
+
+    // IP Address (IPv4) - 4 octets, 0-255 each
+    // Format: XXX.XXX.XXX.XXX
+    private static final Pattern IP_ADDRESS_PATTERN = Pattern.compile(
+        "\\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\b"
+    );
+
     // Optional: Email pattern (can be disabled if needed)
     private static final Pattern EMAIL_PATTERN = Pattern.compile(
         "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
@@ -96,8 +128,20 @@ public class DataPrivacyFilterService {
         filtered = applyPattern(filtered, EIN_PATTERN, "EIN", totalRedactions);
         totalRedactions += countMatches(originalMessage, EIN_PATTERN);
         
+        filtered = applyPattern(filtered, BANK_ROUTING_PATTERN, "Bank Routing Number", totalRedactions);
+        totalRedactions += countMatches(originalMessage, BANK_ROUTING_PATTERN);
+        
+        filtered = applyPattern(filtered, BANK_ACCOUNT_PATTERN, "Bank Account Number", totalRedactions);
+        totalRedactions += countMatches(originalMessage, BANK_ACCOUNT_PATTERN);
+        
         filtered = applyPattern(filtered, CREDIT_CARD_PATTERN, "Credit Card", totalRedactions);
         totalRedactions += countMatches(originalMessage, CREDIT_CARD_PATTERN);
+        
+        filtered = applyPattern(filtered, US_PHONE_PATTERN, "US Phone Number", totalRedactions);
+        totalRedactions += countMatches(originalMessage, US_PHONE_PATTERN);
+        
+        filtered = applyPattern(filtered, IP_ADDRESS_PATTERN, "IP Address", totalRedactions);
+        totalRedactions += countMatches(originalMessage, IP_ADDRESS_PATTERN);
 
         // Apply custom patterns from configuration
         if (customPatterns != null && !customPatterns.isEmpty()) {
