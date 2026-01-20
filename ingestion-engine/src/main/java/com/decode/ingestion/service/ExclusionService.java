@@ -120,8 +120,21 @@ public class ExclusionService {
             // 7. Check File Size (Circuit Breaker)
             long fileSize = Files.size(filePath);
             if (fileSize > MAX_FILE_SIZE_BYTES && !isSourceCode(extension)) {
-                log.warn("Excluded (Size > 1MB): {} ({} bytes)", filePath, fileSize);
-                return true;
+                // For unknown extensions, check MIME type to see if it's text-based
+                // This prevents excluding large source files with unknown extensions
+                if (!ALLOWED_EXTENSIONS.contains(extension) && !extension.isEmpty()) {
+                    // Unknown extension - check if it's text-based before excluding
+                    if (isPlainText(filePath)) {
+                        log.debug("Allowing large unknown extension file (text-based): {} ({} bytes)", filePath, fileSize);
+                        // Treat as source code for size limit exemption
+                    } else {
+                        log.warn("Excluded (Size > 1MB, binary): {} ({} bytes)", filePath, fileSize);
+                        return true;
+                    }
+                } else {
+                    log.warn("Excluded (Size > 1MB): {} ({} bytes)", filePath, fileSize);
+                    return true;
+                }
             }
 
             // 8. MIME Type Verification (for extensionless files)
