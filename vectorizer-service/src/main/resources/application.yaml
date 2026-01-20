@@ -35,3 +35,10 @@ minio:
   access-key: minioadmin
   secret-key: minioadmin
   bucket: decode-source-code
+
+# Vectorizer configuration
+vectorizer:
+  # Auto-vectorize all symbols on startup (default: false)
+  # Set to true if you want vectorization to run automatically on every startup
+  # Recommended: false - symbols will be vectorized when triggered by code-parser or via API
+  auto-vectorize-on-startup: false
