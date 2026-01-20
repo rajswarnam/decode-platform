@@ -64,32 +64,18 @@ public class AclfParserService implements LanguageParser {
                 return tags;
             }
             
-            // Validate XML structure before attempting to parse
-            // XML must start with '<' or have a BOM (Byte Order Mark)
-            if (!trimmedContent.startsWith("<")) {
-                // Check for BOM (UTF-8 BOM is 0xEF 0xBB 0xBF, which appears as characters)
-                boolean hasBom = content.length() >= 3 && 
-                    (content.charAt(0) == '\uFEFF' || // UTF-8 BOM
-                     (content.charAt(0) == '\uFFFE' && content.length() >= 2)); // UTF-16 BOM
-                
-                if (!hasBom) {
-                    log.error("ACLF file {} does not appear to be valid XML (does not start with '<'). " +
-                            "First 100 chars: {}. Skipping XML parsing to avoid WstxUnexpectedCharException.", 
-                            file.getName(), trimmedContent.substring(0, Math.min(100, trimmedContent.length())));
-                    return tags; // Skip parsing - return empty list
-                } else {
-                    log.info("ACLF file {} has BOM, attempting to parse after BOM removal", file.getName());
-                    // Remove BOM and try again
-                    content = content.replaceFirst("^\uFEFF", "").replaceFirst("^\uFFFE", "").trim();
-                    if (!content.startsWith("<")) {
-                        log.error("ACLF file {} still doesn't start with '<' after BOM removal. Skipping.", file.getName());
-                        return tags;
-                    }
-                }
+            // ACLF files can be in two formats: XML or DSL (Domain-Specific Language)
+            // XML format starts with '<', DSL format has keywords like "ExternalDatalist", "Datafield", "Transaction"
+            if (trimmedContent.startsWith("<")) {
+                // XML format - use existing XML parser
+                log.debug("ACLF file {} appears to be XML format", file.getName());
+                JsonNode root = xmlMapper.readTree(content);
+                findAndProcessDetails(root, file, tags);
+            } else {
+                // DSL format - parse using regex/LLM hybrid approach
+                log.info("ACLF file {} appears to be DSL format (not XML). Attempting DSL parsing...", file.getName());
+                parseDslFormat(content, file, tags);
             }
-            
-            // Now safe to parse - we've validated it starts with '<'
-            JsonNode root = xmlMapper.readTree(content);
 
             // Navigate to Detail nodes (assuming a standard structure)
             // Note: Structure can vary, so we search for nodes named 'ExternalXML.Detail'
