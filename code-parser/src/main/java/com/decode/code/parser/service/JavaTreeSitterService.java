@@ -68,13 +68,32 @@ public class JavaTreeSitterService implements LanguageParser {
 
     public List<ParsedSymbol> parseContent(String sourceCode) {
         List<ParsedSymbol> symbols = new ArrayList<>();
-        TSTree tree = parser.parseString(null, sourceCode);
-        TSNode root = tree.getRootNode();
-        traverse(root, symbols, sourceCode);
+        try {
+            TSTree tree = parser.parseString(null, sourceCode);
+            TSNode root = tree.getRootNode();
+            
+            if (root == null || root.isNull()) {
+                log.warn("Parsed tree has null root node");
+                return symbols;
+            }
+            
+            traverse(root, symbols, sourceCode);
+        } catch (org.treesitter.TSException e) {
+            log.warn("Tree-sitter parsing error: {}", e.getMessage());
+            // Return empty list on parsing errors
+        } catch (Exception e) {
+            log.error("Unexpected error parsing content: {}", e.getMessage(), e);
+            // Return empty list on unexpected errors
+        }
         return symbols;
     }
 
     private void traverse(TSNode node, List<ParsedSymbol> symbols, String sourceCode) {
+        // Null check - handle null nodes gracefully
+        if (node == null || node.isNull()) {
+            return;
+        }
+        
         String nodeType = node.getType();
         
         // Extract classes
@@ -104,33 +123,51 @@ public class JavaTreeSitterService implements LanguageParser {
             // Extract each variable as a separate symbol
             for (int i = 0; i < node.getChildCount(); i++) {
                 TSNode child = node.getChild(i);
+                if (child == null || child.isNull()) {
+                    continue; // Skip null children
+                }
+                
                 if ("variable_declarator".equals(child.getType())) {
                     TSNode nameNode = child.getChildByFieldName("name");
-                    if (nameNode != null) {
-                        ParsedSymbol symbol = new ParsedSymbol();
-                        symbol.setCategory("field");
-                        symbol.setStartLine(node.getStartPoint().getRow());
-                        symbol.setEndLine(node.getEndPoint().getRow());
-                        symbol.setName(extractText(nameNode, sourceCode));
-                        
-                        // Try to extract type from parent field_declaration
-                        TSNode typeNode = node.getChildByFieldName("type");
-                        if (typeNode == null) {
-                            // Try finding type_identifier in the first few children
-                            for (int j = 0; j < node.getChildCount() && j < 5; j++) {
-                                TSNode candidate = node.getChild(j);
-                                if ("type_identifier".equals(candidate.getType()) || 
-                                    "generic_type".equals(candidate.getType()) ||
-                                    "array_type".equals(candidate.getType())) {
-                                    typeNode = candidate;
-                                    break;
+                    if (nameNode != null && !nameNode.isNull()) {
+                        try {
+                            ParsedSymbol symbol = new ParsedSymbol();
+                            symbol.setCategory("field");
+                            symbol.setStartLine(node.getStartPoint().getRow());
+                            symbol.setEndLine(node.getEndPoint().getRow());
+                            symbol.setName(extractText(nameNode, sourceCode));
+                            
+                            // Skip if name extraction failed
+                            if (symbol.getName() == null || symbol.getName().isEmpty() || "Unknown".equals(symbol.getName())) {
+                                continue;
+                            }
+                            
+                            // Try to extract type from parent field_declaration
+                            TSNode typeNode = node.getChildByFieldName("type");
+                            if (typeNode == null || typeNode.isNull()) {
+                                // Try finding type_identifier in the first few children
+                                for (int j = 0; j < node.getChildCount() && j < 5; j++) {
+                                    TSNode candidate = node.getChild(j);
+                                    if (candidate != null && !candidate.isNull() && 
+                                        ("type_identifier".equals(candidate.getType()) || 
+                                         "generic_type".equals(candidate.getType()) ||
+                                         "array_type".equals(candidate.getType()))) {
+                                        typeNode = candidate;
+                                        break;
+                                    }
                                 }
                             }
+                            if (typeNode != null && !typeNode.isNull()) {
+                                String typeText = extractText(typeNode, sourceCode);
+                                if (!"Unknown".equals(typeText)) {
+                                    symbol.setType(typeText);
+                                }
+                            }
+                            symbols.add(symbol);
+                        } catch (Exception e) {
+                            log.warn("Failed to extract field symbol: {}", e.getMessage());
+                            // Continue with next field
                         }
-                        if (typeNode != null) {
-                            symbol.setType(extractText(typeNode, sourceCode));
-                        }
-                        symbols.add(symbol);
                     }
                 }
             }
@@ -138,64 +175,100 @@ public class JavaTreeSitterService implements LanguageParser {
 
         // Continue traversal for all children
         for (int i = 0; i < node.getChildCount(); i++) {
-            traverse(node.getChild(i), symbols, sourceCode);
+            TSNode child = node.getChild(i);
+            if (child != null && !child.isNull()) {
+                traverse(child, symbols, sourceCode);
+            }
         }
     }
 
     private ParsedSymbol createSymbol(TSNode node, String sourceCode, String category) {
-        ParsedSymbol symbol = new ParsedSymbol();
-        symbol.setCategory(category);
-        symbol.setStartLine(node.getStartPoint().getRow());
-        symbol.setEndLine(node.getEndPoint().getRow());
-
-        // Find name
-        TSNode nameNode = node.getChildByFieldName("name");
-        if (nameNode != null) {
-            symbol.setName(extractText(nameNode, sourceCode));
-        } else {
-            // Fallback: look for identifier in children
-            for (int i = 0; i < node.getChildCount() && i < 10; i++) {
-                TSNode child = node.getChild(i);
-                if ("identifier".equals(child.getType()) || 
-                    "type_identifier".equals(child.getType())) {
-                    symbol.setName(extractText(child, sourceCode));
-                    break;
-                }
-            }
-            if (symbol.getName() == null || symbol.getName().isEmpty()) {
-                symbol.setName("Anonymous");
-            }
+        // Null check - handle null nodes gracefully
+        if (node == null || node.isNull()) {
+            log.debug("createSymbol called with null node for category: {}", category);
+            return null;
         }
+        
+        try {
+            ParsedSymbol symbol = new ParsedSymbol();
+            symbol.setCategory(category);
+            symbol.setStartLine(node.getStartPoint().getRow());
+            symbol.setEndLine(node.getEndPoint().getRow());
 
-        // Try to extract type for methods (return type)
-        if ("method".equals(category) || "constructor".equals(category)) {
-            TSNode typeNode = node.getChildByFieldName("type");
-            if (typeNode == null) {
-                // For constructors, type is the class name
-                if ("constructor".equals(category)) {
-                    // Constructor name is typically the first identifier
-                    if (nameNode != null) {
-                        symbol.setType(extractText(nameNode, sourceCode));
+            // Find name
+            TSNode nameNode = node.getChildByFieldName("name");
+            if (nameNode != null && !nameNode.isNull()) {
+                symbol.setName(extractText(nameNode, sourceCode));
+            } else {
+                // Fallback: look for identifier in children
+                for (int i = 0; i < node.getChildCount() && i < 10; i++) {
+                    TSNode child = node.getChild(i);
+                    if (child != null && !child.isNull() && 
+                        ("identifier".equals(child.getType()) || 
+                         "type_identifier".equals(child.getType()))) {
+                        symbol.setName(extractText(child, sourceCode));
+                        break;
                     }
                 }
-            } else {
-                symbol.setType(extractText(typeNode, sourceCode));
+                if (symbol.getName() == null || symbol.getName().isEmpty() || "Unknown".equals(symbol.getName())) {
+                    symbol.setName("Anonymous");
+                }
             }
-        }
+            
+            // If we still don't have a valid name, return null (can't create symbol without name)
+            if (symbol.getName() == null || symbol.getName().isEmpty() || "Unknown".equals(symbol.getName())) {
+                log.debug("createSymbol: Could not extract name for {} node", category);
+                return null;
+            }
 
-        return symbol;
+            // Try to extract type for methods (return type)
+            if ("method".equals(category) || "constructor".equals(category)) {
+                TSNode typeNode = node.getChildByFieldName("type");
+                if (typeNode == null || typeNode.isNull()) {
+                    // For constructors, type is the class name
+                    if ("constructor".equals(category)) {
+                        // Constructor name is typically the first identifier
+                        if (nameNode != null && !nameNode.isNull()) {
+                            symbol.setType(extractText(nameNode, sourceCode));
+                        }
+                    }
+                } else {
+                    String typeText = extractText(typeNode, sourceCode);
+                    if (!"Unknown".equals(typeText)) {
+                        symbol.setType(typeText);
+                    }
+                }
+            }
+
+            return symbol;
+        } catch (Exception e) {
+            log.warn("createSymbol failed for category {}: {}", category, e.getMessage());
+            return null;
+        }
     }
 
     private String extractText(TSNode node, String source) {
-        // Simplified extraction assuming no multi-byte characters messing up offsets
-        // Ideally we use byte-level extraction, but String-level is okay for PoC on
-        // ASCII
-        int start = node.getStartByte();
-        int end = node.getEndByte();
-        if (start >= 0 && end <= source.length() && start < end) {
-            return source.substring(start, end);
+        // Null check - handle null nodes gracefully
+        if (node == null || node.isNull()) {
+            log.debug("extractText called with null node");
+            return "Unknown";
         }
-        // Fallback using lines if byte offset fails due to encoding
-        return "Unknown";
+        
+        try {
+            // Simplified extraction assuming no multi-byte characters messing up offsets
+            // Ideally we use byte-level extraction, but String-level is okay for PoC on
+            // ASCII
+            int start = node.getStartByte();
+            int end = node.getEndByte();
+            if (start >= 0 && end <= source.length() && start < end) {
+                return source.substring(start, end);
+            }
+            // Fallback using lines if byte offset fails due to encoding
+            log.debug("extractText: invalid byte offsets (start: {}, end: {}, source length: {})", start, end, source.length());
+            return "Unknown";
+        } catch (Exception e) {
+            log.warn("extractText failed for node type {}: {}", node.getType(), e.getMessage());
+            return "Unknown";
+        }
     }
 }
