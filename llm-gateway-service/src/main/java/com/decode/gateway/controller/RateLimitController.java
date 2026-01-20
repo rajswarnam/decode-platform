@@ -33,15 +33,14 @@ public class RateLimitController {
         @SuppressWarnings("unchecked")
         Map<String, Object> rpm = (Map<String, Object>) metrics.get("rpm");
         
-        Map<String, Object> stats = Map.of(
-            "tpmUsage", String.format("%d/%d tokens (%.1f%%)", 
-                tpm.get("used"), tpm.get("limit"), tpm.get("percentage")),
-            "rpmUsage", String.format("%d/%d requests (%.1f%%)", 
-                rpm.get("used"), rpm.get("limit"), rpm.get("percentage")),
-            "tpmRemaining", tpm.get("remaining"),
-            "rpmRemaining", rpm.get("remaining"),
-            "metrics", metrics
-        );
+        Map<String, Object> stats = new java.util.HashMap<>();
+        stats.put("tpmUsage", String.format("%d/%d tokens (%.1f%%)", 
+                tpm.get("used"), tpm.get("limit"), tpm.get("percentage")));
+        stats.put("rpmUsage", String.format("%d/%d requests (%.1f%%)", 
+                rpm.get("used"), rpm.get("limit"), rpm.get("percentage")));
+        stats.put("tpmRemaining", tpm.get("remaining"));
+        stats.put("rpmRemaining", rpm.get("remaining"));
+        stats.put("metrics", metrics);
         
         return ResponseEntity.ok(stats);
     }
