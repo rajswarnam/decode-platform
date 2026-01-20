@@ -24,6 +24,7 @@ public class InternalLlmClientService {
 
     private final RestTemplate restTemplate;
     private final AzureAdTokenService azureAdTokenService;
+    private final DataPrivacyFilterService dataPrivacyFilterService;
 
     @Value("${internal.llm.gateway.base-url}")
     private String baseUrl;
@@ -58,6 +59,9 @@ public class InternalLlmClientService {
     private Flux<String> streamCompletionStreaming(String userMessage, String model) {
         return Flux.create(sink -> {
             try {
+                // Filter sensitive data before sending to LLM
+                String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
+                
                 String accessToken = azureAdTokenService.getAccessToken();
                 String endpoint = baseUrl + "/chat/completions" + queryParams;
 
@@ -75,7 +79,7 @@ public class InternalLlmClientService {
                 List<Map<String, String>> messages = new ArrayList<>();
                 Map<String, String> userMsg = new HashMap<>();
                 userMsg.put("role", "user");
-                userMsg.put("content", userMessage);
+                userMsg.put("content", filteredMessage); // Use filtered message
                 messages.add(userMsg);
                 requestBody.put("messages", messages);
 
@@ -307,6 +311,8 @@ public class InternalLlmClientService {
      * Non-streaming completion.
      */
     private Flux<String> streamCompletionNonStreaming(String userMessage, String model) {
+        // Filter sensitive data before sending to LLM
+        String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
         return Flux.create(sink -> {
             try {
                 String accessToken = azureAdTokenService.getAccessToken();
@@ -486,6 +492,8 @@ public class InternalLlmClientService {
      * Adjust based on your internal gateway's API format.
      */
     public Map<String, Object> createCompletionRequest(String userMessage, String model, boolean stream) {
+        // Filter sensitive data before sending to LLM
+        String filteredMessage = dataPrivacyFilterService.filterSensitiveData(userMessage);
         Map<String, Object> request = new HashMap<>();
         request.put("model", model != null ? model : defaultModel);
         request.put("stream", stream);

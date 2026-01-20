@@ -22,6 +22,19 @@ llm:
   retry:
     max-attempts: 3      # Max retry attempts for 429 errors
     initial-delay-ms: 3000  # Initial delay for 429 retry (exponential backoff: 3s, 6s, 12s)
+  privacy:
+    filter:
+      enabled: true  # Enable data privacy filtering
+      replacement: "[REDACTED]"  # Replacement text for sensitive data
+      # Custom regex patterns (in addition to built-in credit card and SSN patterns)
+      # Patterns are applied in order, use Java regex syntax
+      patterns:
+        # Example: Email pattern (optional, can be removed if not needed)
+        # - "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
+        # Example: Phone number pattern (US format)
+        # - "\\b(?:\\+?1[-.]?)?\\(?([0-9]{3})\\)?[-.]?([0-9]{3})[-.]?([0-9]{4})\\b"
+        # Example: Bank account number (customize based on your needs)
+        # - "\\b[0-9]{8,17}\\b"
 azure:
   ad:
     tenant-id: ${AZURE_AD_TENANT_ID}
