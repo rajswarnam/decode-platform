@@ -111,10 +111,16 @@ public class ProjectDiscoveryService {
             tech.add("C/C++");
 
         // Scan for source files to detect tech stack (even without build files)
+        // This is important for monoliths with multiple technologies
         try (Stream<Path> stream = Files.list(dir)) {
             boolean hasCobol = false;
             boolean hasC = false;
             boolean hasCpp = false;
+            boolean hasAspx = false;
+            boolean hasAclf = false;
+            boolean hasAngular = false; // TypeScript/JavaScript for Angular
+            boolean hasTypeScript = false;
+            boolean hasJavaScript = false;
             
             for (Path p : stream.collect(java.util.stream.Collectors.toList())) {
                 String s = p.toString().toLowerCase();
@@ -139,6 +145,30 @@ public class ProjectDiscoveryService {
                         hasCpp = true; // Default to C++ if only headers
                     }
                 }
+                
+                // ASP.NET detection (ASPX files)
+                if (s.endsWith(".aspx") || s.endsWith(".aspx.cs") || s.endsWith(".aspx.vb")) {
+                    hasAspx = true;
+                }
+                
+                // ACLF detection (proprietary format)
+                if (s.endsWith(".aclf")) {
+                    hasAclf = true;
+                }
+                
+                // Angular/TypeScript/JavaScript detection
+                if (s.endsWith(".ts") || s.endsWith(".tsx")) {
+                    hasTypeScript = true;
+                    hasAngular = true; // TypeScript is commonly used in Angular
+                }
+                if (s.endsWith(".js") || s.endsWith(".jsx")) {
+                    hasJavaScript = true;
+                    hasAngular = true; // JavaScript is also used in Angular
+                }
+                // Angular-specific files
+                if (s.contains("angular.json") || s.contains("angular-cli.json")) {
+                    hasAngular = true;
+                }
             }
             
             if (hasCobol)
@@ -148,6 +178,28 @@ public class ProjectDiscoveryService {
             if (hasC || hasCpp) {
                 if (!tech.contains("C/C++")) {
                     tech.add("C/C++");
+                }
+            }
+            
+            // Add ASP.NET if we found ASPX files
+            if (hasAspx) {
+                tech.add("ASP.NET");
+            }
+            
+            // Add ACLF if we found ACLF files
+            if (hasAclf) {
+                tech.add("ACLF");
+            }
+            
+            // Add Angular if we found TypeScript/JavaScript files or Angular config
+            // Note: package.json check above already adds "Node/React", but Angular is more specific
+            if (hasAngular && !tech.contains("Angular")) {
+                // Replace generic "Node/React" with "Angular" if we have Angular-specific files
+                if (hasTypeScript && tech.contains("Node/React")) {
+                    tech.remove("Node/React");
+                    tech.add("Angular");
+                } else if (hasTypeScript) {
+                    tech.add("Angular");
                 }
             }
         } catch (IOException e) {

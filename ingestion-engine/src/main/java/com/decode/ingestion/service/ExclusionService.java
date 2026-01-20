@@ -50,7 +50,8 @@ public class ExclusionService {
     // Allowed Source Code Extensions
     private static final Set<String> ALLOWED_EXTENSIONS = new HashSet<>(Arrays.asList(
             "java", "c", "cpp", "h", "hpp", "cbl", "cob", "js", "ts", "jsx", "tsx", "py", "rb", "go", "rs",
-            "xml", "yaml", "yml", "json", "properties", "conf", "aclf", "md", "txt", "rst", "sql"));
+            "xml", "yaml", "yml", "json", "properties", "conf", "aclf", "md", "txt", "rst", "sql",
+            "aspx", "aspx.cs", "aspx.vb", "cs", "vb")); // ASP.NET extensions
 
     // File Size Limit (1MB for non-source files)
     private static final long MAX_FILE_SIZE_BYTES = 1_048_576; // 1MB
@@ -173,9 +174,11 @@ public class ExclusionService {
 
     /**
      * Checks if extension is a known source code format.
+     * Used to exempt from file size limits.
      */
     private boolean isSourceCode(String extension) {
-        return Arrays.asList("java", "c", "cpp", "h", "cbl", "cob", "js", "ts", "py").contains(extension);
+        return Arrays.asList("java", "c", "cpp", "h", "cbl", "cob", "js", "ts", "jsx", "tsx", "py", 
+                "aspx", "aspx.cs", "aspx.vb", "cs", "vb", "aclf", "xml", "html", "htm").contains(extension);
     }
 
     /**
