@@ -12,13 +12,21 @@ import java.util.regex.Matcher;
 /**
  * Data Privacy Filter Service
  * 
- * Filters sensitive data patterns (credit cards, SSN, etc.) from user messages
- * before sending to LLM to prevent data privacy violations.
+ * Filters sensitive data patterns (PII) from user messages before sending to LLM
+ * to prevent data privacy violations and comply with internal gateway requirements.
+ * 
+ * Built-in patterns (always enabled if filterEnabled=true):
+ * - Credit Card Numbers (Visa, MasterCard, Amex, Discover)
+ * - Social Security Number (SSN) - 9 digits, format XXX-XX-XXXX
+ * - Individual Taxpayer Identification Number (ITIN) - 9 digits starting with 9
+ * - Employer Identification Number (EIN) - 9 digits, format XX-XXXXXXX
  * 
  * Configurable via application.yaml:
  * - llm.privacy.filter.enabled: true/false
- * - llm.privacy.filter.patterns: List of regex patterns
+ * - llm.privacy.filter.patterns: List of additional custom regex patterns
  * - llm.privacy.filter.replacement: Replacement string (default: "[REDACTED]")
+ * 
+ * Note: Pattern order matters. ITIN is checked before SSN since ITINs start with 9.
  */
 @Service
 @Slf4j
@@ -34,12 +42,28 @@ public class DataPrivacyFilterService {
     private List<String> customPatterns;
 
     // Built-in patterns (always enabled if filterEnabled=true)
+    // Credit Card Numbers (Visa, MasterCard, Amex, Discover)
     private static final Pattern CREDIT_CARD_PATTERN = Pattern.compile(
         "\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|3[0-9]{13}|6(?:011|5[0-9]{2})[0-9]{12})\\b"
     );
 
+    // Social Security Number (SSN) - 9 digits, format XXX-XX-XXXX
+    // Excludes invalid prefixes: 000, 666, 900-999 (ITIN range)
     private static final Pattern SSN_PATTERN = Pattern.compile(
         "\\b(?!000)(?!666)(?!9)[0-9]{3}[- ]?(?!00)[0-9]{2}[- ]?(?!0000)[0-9]{4}\\b"
+    );
+
+    // Individual Taxpayer Identification Number (ITIN) - 9 digits starting with 9
+    // Format: 9XX-XX-XXXX or 9XXXXXXXX
+    // Valid middle digit ranges: 50-65, 70-88, 90-92, 94-99 (excludes 89, 93)
+    private static final Pattern ITIN_PATTERN = Pattern.compile(
+        "\\b9[0-9]{2}[- ]?(?:5[0-9]|6[0-5]|7[0-9]|8[0-8]|9[0-2]|9[4-9])[- ]?[0-9]{4}\\b"
+    );
+
+    // Employer Identification Number (EIN) - 9 digits, format XX-XXXXXXX
+    // Always starts with 0-9 (first digit), second digit is 0-9
+    private static final Pattern EIN_PATTERN = Pattern.compile(
+        "\\b[0-9]{2}[- ]?[0-9]{7}\\b"
     );
 
     // Optional: Email pattern (can be disabled if needed)
@@ -61,12 +85,19 @@ public class DataPrivacyFilterService {
         String filtered = originalMessage;
         int totalRedactions = 0;
 
-        // Apply built-in patterns
-        filtered = applyPattern(filtered, CREDIT_CARD_PATTERN, "Credit Card", totalRedactions);
-        totalRedactions += countMatches(originalMessage, CREDIT_CARD_PATTERN);
+        // Apply built-in patterns (order matters - more specific patterns first)
+        // ITIN must come before SSN since ITINs start with 9 and could match SSN pattern
+        filtered = applyPattern(filtered, ITIN_PATTERN, "ITIN", totalRedactions);
+        totalRedactions += countMatches(originalMessage, ITIN_PATTERN);
         
         filtered = applyPattern(filtered, SSN_PATTERN, "SSN", totalRedactions);
         totalRedactions += countMatches(originalMessage, SSN_PATTERN);
+        
+        filtered = applyPattern(filtered, EIN_PATTERN, "EIN", totalRedactions);
+        totalRedactions += countMatches(originalMessage, EIN_PATTERN);
+        
+        filtered = applyPattern(filtered, CREDIT_CARD_PATTERN, "Credit Card", totalRedactions);
+        totalRedactions += countMatches(originalMessage, CREDIT_CARD_PATTERN);
 
         // Apply custom patterns from configuration
         if (customPatterns != null && !customPatterns.isEmpty()) {

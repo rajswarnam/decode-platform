@@ -26,7 +26,12 @@ llm:
     filter:
       enabled: true  # Enable data privacy filtering
       replacement: "[REDACTED]"  # Replacement text for sensitive data
-      # Custom regex patterns (in addition to built-in credit card and SSN patterns)
+      # Built-in patterns (always active if enabled=true):
+      # - Credit Card Numbers (Visa, MasterCard, Amex, Discover)
+      # - Social Security Number (SSN) - 9 digits, format XXX-XX-XXXX
+      # - Individual Taxpayer Identification Number (ITIN) - 9 digits starting with 9
+      # - Employer Identification Number (EIN) - 9 digits, format XX-XXXXXXX
+      # Custom regex patterns (in addition to built-in patterns above)
       # Patterns are applied in order, use Java regex syntax
       patterns:
         # Example: Email pattern (optional, can be removed if not needed)
