@@ -96,7 +96,12 @@ public class AgentOrchestrator {
         // PHASE 1: ARCHITECT PLANNING (now with domain knowledge + query intent)
         // Detect business vs technical intent first
         Intent queryIntentType = detectIntent(userQuery);
-        List<WorkerTask> plan = createExecutionPlan(userQuery, enrichedContext, queryIntentType, progressConsumer);
+        
+        // Get project tech stack for dynamic worker selection
+        List<String> projectTechStack = getProjectTechStack(domain);
+        log.info("Project tech stack: {}", projectTechStack);
+        
+        List<WorkerTask> plan = createExecutionPlan(userQuery, enrichedContext, queryIntentType, projectTechStack, progressConsumer);
         
         // Store initial plan with query intent for worker access
         CurrentExecutionPlan executionPlan = CurrentExecutionPlan.builder()
@@ -784,7 +789,31 @@ public class AgentOrchestrator {
         return sb.toString();
     }
 
-    private List<WorkerTask> createExecutionPlan(String query, String context, Intent intentType, Consumer<String> progressConsumer) {
+    /**
+     * Get project tech stack from database
+     */
+    private List<String> getProjectTechStack(String domain) {
+        try {
+            if (domain != null && !domain.isEmpty()) {
+                // Try to find project by name or domain
+                Optional<Project> project = projectRepository.findByName(domain);
+                if (project.isEmpty()) {
+                    List<Project> projectsByDomain = projectRepository.findByDomain(domain);
+                    if (!projectsByDomain.isEmpty()) {
+                        project = Optional.of(projectsByDomain.get(0)); // Use first project in domain
+                    }
+                }
+                if (project.isPresent() && project.get().getTechStack() != null) {
+                    return project.get().getTechStack();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Error retrieving project tech stack: {}", e.getMessage());
+        }
+        return new ArrayList<>(); // Return empty list if not found
+    }
+
+    private List<WorkerTask> createExecutionPlan(String query, String context, Intent intentType, List<String> projectTechStack, Consumer<String> progressConsumer) {
         if (progressConsumer != null) progressConsumer.accept("🧠 Head Architect: Devising execution plan...");
         
         String intentGuidance;
