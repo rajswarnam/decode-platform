@@ -34,15 +34,33 @@ If you upload a new project with ACLF files, parsing happens automatically durin
 
 ### Option B: Manual Parsing via API
 
-Trigger parsing for a specific project:
-
+**Single Project:**
 ```bash
 # Get project ID first
 curl http://localhost:8080/api/v1/projects
 
 # Trigger parsing for a project
-curl -X POST http://localhost:8080/api/v1/parser/trigger/<project_id>
+curl -X POST http://localhost:8080/api/v1/parser/trigger?projectId=<project_id>
 ```
+
+**All Projects in a Group:**
+```bash
+# First, preview which projects will be parsed
+curl "http://localhost:8080/api/v1/parser/group/projects?groupName=fusion-master%20(1)"
+
+# Trigger parsing for all projects in a group
+curl -X POST "http://localhost:8080/api/v1/parser/trigger/group?groupName=fusion-master%20(1)"
+```
+
+**Group Matching:**
+- Projects are matched if their name starts with the group name
+- Or if the group name appears in the project name path (e.g., `fusion-master (1)/fusion-master/...`)
+- Or if the base path contains the group name
+
+**Example:**
+- Group: `"fusion-master (1)"`
+- Matches: `"fusion-master (1)/fusion-master/Argo/SRW/Group/H/Transaction"`
+- Matches: `"fusion-master (1)/fusion-master/Argo/Alert_Mgr/core/Datatist"`
 
 ### Option C: Re-parse All Projects
 
