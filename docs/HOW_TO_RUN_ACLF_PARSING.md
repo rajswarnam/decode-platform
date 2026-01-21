@@ -2,6 +2,8 @@
 
 This guide explains how to run ACLF parsing with the new hybrid approach (regex + LLM extraction).
 
+> **📖 API Reference:** For complete API documentation, see [Parser API Reference](./API_REFERENCE_PARSER.md)
+
 ## Prerequisites
 
 1. **Services Running:**
