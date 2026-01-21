@@ -99,21 +99,8 @@ public class InternalLlmClientService {
                 messages.add(userMsg);
                 requestBody.put("messages", messages);
 
-                // INFO: Print complete request for manual testing in Bruno
-                ObjectMapper requestMapper = new ObjectMapper();
-                requestMapper.enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
-                String requestBodyJson = requestMapper.writeValueAsString(requestBody);
-                log.info("=== STREAMING REQUEST TO INTERNAL GATEWAY (FOR BRUNO TESTING) ===");
-                log.info("URL: {}", endpoint);
-                log.info("Method: POST");
-                log.info("Headers:");
-                log.info("  Content-Type: {}", headers.getContentType());
-                log.info("  Authorization: Bearer {}", accessToken);
-                log.info("Original Message (before filtering): {}", userMessage);
-                log.info("Filtered Message (after filtering): {}", finalFilteredMessage);
-                log.info("Full Request Body (JSON):");
-                log.info("{}", requestBodyJson);
-                log.info("================================================================");
+                // Only log request details at DEBUG level (reduced verbosity)
+                log.debug("Streaming request to internal gateway: {} (model: {})", endpoint, model != null ? model : defaultModel);
 
                 HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
@@ -361,21 +348,8 @@ public class InternalLlmClientService {
                 messages.add(userMsg);
                 requestBody.put("messages", messages);
 
-                // INFO: Print complete request for manual testing in Bruno
-                ObjectMapper requestMapper = new ObjectMapper();
-                requestMapper.enable(com.fasterxml.jackson.databind.SerializationFeature.INDENT_OUTPUT);
-                String requestBodyJson = requestMapper.writeValueAsString(requestBody);
-                log.info("=== NON-STREAMING REQUEST TO INTERNAL GATEWAY (FOR BRUNO TESTING) ===");
-                log.info("URL: {}", endpoint);
-                log.info("Method: POST");
-                log.info("Headers:");
-                log.info("  Content-Type: {}", headers.getContentType());
-                log.info("  Authorization: Bearer {}", accessToken);
-                log.info("Original Message (before filtering): {}", userMessage);
-                log.info("Filtered Message (after filtering): {}", finalFilteredMessage);
-                log.info("Full Request Body (JSON):");
-                log.info("{}", requestBodyJson);
-                log.info("================================================================");
+                // Only log request details at DEBUG level (reduced verbosity)
+                log.debug("Non-streaming request to internal gateway: {} (model: {})", endpoint, model != null ? model : defaultModel);
 
                 HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
 
