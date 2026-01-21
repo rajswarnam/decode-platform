@@ -1213,20 +1213,20 @@ public class AgentOrchestrator {
                 if (!results.isEmpty()) {
                     log.info("Found {} documents without filter, will filter by project ID from metadata", results.size());
                     int beforeSize = results.size();
+                    // Store original results for debug logging
+                    List<Document> originalResults = new ArrayList<>(results);
                     results = filterByProjectId(results, projectIds);
                     if (results.isEmpty() && !projectIds.isEmpty() && beforeSize > 0) {
-                        log.warn("⚠️ After filtering by project_id from metadata, 0 documents matched (was {}). Checking first document's metadata...", beforeSize);
-                        // Debug: Check first document's metadata
-                        Document firstDoc = results.isEmpty() ? null : results.get(0);
-                        if (firstDoc == null && !results.isEmpty()) {
-                            // Get first doc from original results before filtering
-                            var originalResults = vectorStore.similaritySearch(unfilteredBuilder.build());
-                            if (!originalResults.isEmpty()) {
-                                firstDoc = originalResults.get(0);
-                                log.warn("First document metadata project_id: {}, Looking for: {}", 
-                                    firstDoc.getMetadata().get("project_id"), projectIds);
-                            }
+                        log.warn("⚠️ After filtering by project_id from metadata, 0 documents matched (was {}). Checking document metadata...", beforeSize);
+                        // Debug: Check first few documents' metadata
+                        int sampleSize = Math.min(5, originalResults.size());
+                        for (int i = 0; i < sampleSize; i++) {
+                            Document doc = originalResults.get(i);
+                            Object projectIdMeta = doc.getMetadata().get("project_id");
+                            log.warn("  Document {}: project_id={}, symbol_id={}, domain={}", 
+                                i + 1, projectIdMeta, doc.getMetadata().get("symbol_id"), doc.getMetadata().get("domain"));
                         }
+                        log.warn("Looking for project IDs: {}", projectIds);
                     }
                 }
             }
@@ -1283,6 +1283,19 @@ public class AgentOrchestrator {
         
         log.info("Filtered {} documents to {} matching project IDs (direct metadata filtering)", 
             docs.size(), filtered.size());
+        
+        if (filtered.isEmpty() && !docs.isEmpty()) {
+            // Debug: Check what project_ids are in the documents
+            Set<String> foundProjectIds = new java.util.HashSet<>();
+            for (Document doc : docs) {
+                Object pid = doc.getMetadata().get("project_id");
+                if (pid != null) {
+                    foundProjectIds.add(pid.toString());
+                }
+            }
+            log.warn("⚠️ Direct metadata filtering returned 0 matches. Found project_ids in metadata: {}, Looking for: {}", 
+                foundProjectIds, projectIds);
+        }
         
         return filtered;
     }
