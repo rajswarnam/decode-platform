@@ -78,25 +78,57 @@ public class ParserController {
     
     /**
      * Trigger parsing for all projects in a group
-     * Groups are identified by project name prefix (e.g., "fusion-master (1)/fusion-master/...")
-     * or by a common base path pattern
+     * Groups are identified by:
+     * 1. Project name prefix (e.g., "fusion-master (1)/" matches group "fusion-master (1)")
+     * 2. Project name contains group (e.g., "fusion-master (1)/fusion-master/Argo/..." contains "fusion-master (1)")
+     * 3. Base path contains the group name
+     * 
+     * Examples:
+     * - groupName="fusion-master (1)" matches: "fusion-master (1)/fusion-master/Argo/SRW/Group/H/Transaction"
+     * - groupName="fusion" matches all projects with "fusion" in name or path
      */
     @PostMapping("/trigger/group")
     public ResponseEntity<Map<String, Object>> triggerParsingForGroup(@RequestParam String groupName) {
         log.info("📥 Received trigger for parsing group: {}", groupName);
         
         // Find all projects that match the group name
-        // Group can be identified by:
-        // 1. Project name prefix (e.g., "fusion-master (1)/")
-        // 2. Base path containing the group name
+        // Group matching logic:
+        // 1. Project name starts with group name (e.g., "fusion-master (1)/...")
+        // 2. Project name contains "/groupName/" pattern
+        // 3. Project name contains group name as a distinct segment
+        // 4. Base path contains the group name
         java.util.List<Project> projects = projectRepository.findAll().stream()
             .filter(p -> {
                 String name = p.getName();
                 String basePath = p.getBasePath();
-                // Match if project name starts with group name or contains it
-                // Or if base path contains the group name
-                return (name != null && (name.startsWith(groupName) || name.contains("/" + groupName + "/"))) ||
-                       (basePath != null && basePath.contains(groupName));
+                
+                if (name == null && basePath == null) {
+                    return false;
+                }
+                
+                // Match if project name starts with group name (most common case)
+                if (name != null && name.startsWith(groupName)) {
+                    return true;
+                }
+                
+                // Match if project name contains group as a path segment
+                // e.g., "fusion-master (1)/fusion-master/..." contains "fusion-master (1)"
+                if (name != null && (name.contains("/" + groupName + "/") || name.contains(groupName + "/"))) {
+                    return true;
+                }
+                
+                // Match if base path contains group name
+                if (basePath != null && basePath.contains(groupName)) {
+                    return true;
+                }
+                
+                // Match if group name is a substring (for partial matches)
+                // But only if it's a meaningful match (not just a single character)
+                if (groupName.length() > 3 && name != null && name.contains(groupName)) {
+                    return true;
+                }
+                
+                return false;
             })
             .collect(java.util.stream.Collectors.toList());
         
@@ -141,7 +173,8 @@ public class ParserController {
     }
     
     /**
-     * Get all projects in a group
+     * Get all projects in a group (without triggering parsing)
+     * Useful for previewing which projects will be parsed
      */
     @GetMapping("/group/projects")
     public ResponseEntity<Map<String, Object>> getProjectsInGroup(@RequestParam String groupName) {
@@ -149,8 +182,32 @@ public class ParserController {
             .filter(p -> {
                 String name = p.getName();
                 String basePath = p.getBasePath();
-                return (name != null && (name.startsWith(groupName) || name.contains("/" + groupName + "/"))) ||
-                       (basePath != null && basePath.contains(groupName));
+                
+                if (name == null && basePath == null) {
+                    return false;
+                }
+                
+                // Match if project name starts with group name
+                if (name != null && name.startsWith(groupName)) {
+                    return true;
+                }
+                
+                // Match if project name contains group as a path segment
+                if (name != null && (name.contains("/" + groupName + "/") || name.contains(groupName + "/"))) {
+                    return true;
+                }
+                
+                // Match if base path contains group name
+                if (basePath != null && basePath.contains(groupName)) {
+                    return true;
+                }
+                
+                // Match if group name is a substring (for partial matches)
+                if (groupName.length() > 3 && name != null && name.contains(groupName)) {
+                    return true;
+                }
+                
+                return false;
             })
             .collect(java.util.stream.Collectors.toList());
         
