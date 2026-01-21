@@ -1193,10 +1193,13 @@ public class AgentOrchestrator {
                 log.debug("Filtering by {} project IDs: {}", projectIds.size(), filterExpr);
             } else {
                 // Single project ID
-                builder.filterExpression("project_id == '" + projectIds.get(0).toString() + "'");
-                log.debug("Filtering by project_id: {}", projectIds.get(0));
+                String projectIdStr = projectIds.get(0).toString();
+                builder.filterExpression("project_id == '" + projectIdStr + "'");
+                log.info("FOCUSED: Filtering by project_id: {} (Qdrant filter)", projectIdStr);
             }
             results = vectorStore.similaritySearch(builder.build());
+            log.info("FOCUSED: Qdrant project_id filter returned {} documents for project_id: {}", 
+                results.size(), projectIds.get(0));
             
             // If filter returns 0 results, try without filter and use fallback filtering
             if (results.isEmpty()) {
