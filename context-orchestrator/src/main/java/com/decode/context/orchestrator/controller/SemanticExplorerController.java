@@ -81,37 +81,42 @@ public class SemanticExplorerController {
                 
                 // Support multiple projects: if "projects" array is provided, use it
                 // Otherwise, check if domain is comma-separated list
-                List<String> projectNames = new ArrayList<>();
-                List<UUID> projectIds = new ArrayList<>();
+                List<String> projectNamesList = new ArrayList<>();
+                List<UUID> projectIdsList = new ArrayList<>();
                 
                 if (request.containsKey("projects") && request.get("projects") instanceof List) {
                     @SuppressWarnings("unchecked")
                     List<String> projectsList = (List<String>) request.get("projects");
-                    projectNames.addAll(projectsList);
+                    projectNamesList.addAll(projectsList);
                     
                     // Convert project names to IDs for vector search filtering
-                    for (String projectName : projectNames) {
+                    for (String projectName : projectNamesList) {
                         projectRepository.findByName(projectName).ifPresent(p -> {
-                            projectIds.add(p.getId());
+                            projectIdsList.add(p.getId());
                         });
                     }
-                    log.info("Multi-project query: {} projects selected ({} IDs resolved)", projectNames.size(), projectIds.size());
+                    log.info("Multi-project query: {} projects selected ({} IDs resolved)", projectNamesList.size(), projectIdsList.size());
                 } else if (domain != null && domain.contains(",")) {
                     // Comma-separated project names
-                    projectNames = Arrays.asList(domain.split(","));
-                    for (String projectName : projectNames) {
+                    projectNamesList = new ArrayList<>(Arrays.asList(domain.split(",")));
+                    for (String projectName : projectNamesList) {
                         projectRepository.findByName(projectName.trim()).ifPresent(p -> {
-                            projectIds.add(p.getId());
+                            projectIdsList.add(p.getId());
                         });
                     }
-                    log.info("Multi-project query (comma-separated): {} projects ({} IDs resolved)", projectNames.size(), projectIds.size());
+                    log.info("Multi-project query (comma-separated): {} projects ({} IDs resolved)", projectNamesList.size(), projectIdsList.size());
                 } else {
                     // Single project/domain
-                    projectNames.add(domain);
+                    projectNamesList.add(domain);
                     projectRepository.findByName(domain).ifPresent(p -> {
-                        projectIds.add(p.getId());
+                        projectIdsList.add(p.getId());
                     });
                 }
+
+                // Make final copies for use in lambda
+                final List<String> finalProjectNames = new ArrayList<>(projectNamesList);
+                final List<UUID> finalProjectIds = new ArrayList<>(projectIdsList);
+                final String finalDomain = domain;
 
                 return outputStream -> {
                         java.io.PrintWriter writer = new java.io.PrintWriter(new java.io.OutputStreamWriter(
@@ -119,8 +124,8 @@ public class SemanticExplorerController {
 
                         try {
                                 // Pass first project name for backward compatibility, but also pass full list and IDs
-                                String primaryDomain = projectNames.isEmpty() ? domain : projectNames.get(0);
-                                explorerService.exploreStream(query, primaryDomain, projectNames, projectIds,
+                                String primaryDomain = finalProjectNames.isEmpty() ? finalDomain : finalProjectNames.get(0);
+                                explorerService.exploreStream(query, primaryDomain, finalProjectNames, finalProjectIds,
                                                 progress -> {
                                                         writer.write("event: progress\n");
                                                         writer.write("data: " + progress + "\n\n");
