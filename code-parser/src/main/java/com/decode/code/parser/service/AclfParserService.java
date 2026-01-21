@@ -504,7 +504,117 @@ public class AclfParserService implements LanguageParser {
         long fieldReferenceCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FIELD_REFERENCE")).count();
         long datafieldReferenceCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD_REFERENCE")).count();
         
-        log.info("DSL parsing complete for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} FormBlocks, {} FormReports, {} Calculations, {} FieldReferences, {} DatafieldReferences", 
+        log.info("DSL parsing complete (regex patterns) for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} FormBlocks, {} FormReports, {} Calculations, {} FieldReferences, {} DatafieldReferences", 
                 file.getName(), tags.size(), datalistCount, datafieldCount, transactionCount, formBlockCount, formReportCount, calculationCount, fieldReferenceCount, datafieldReferenceCount);
+        
+        // HYBRID APPROACH: Use LLM to extract additional field references from unknown patterns
+        // This catches patterns that regex might miss (nested structures, complex expressions, etc.)
+        try {
+            List<ParsedSymbol> llmExtractedFields = extractFieldsWithLLM(content, file, uniqueFieldReferences);
+            if (!llmExtractedFields.isEmpty()) {
+                tags.addAll(llmExtractedFields);
+                log.info("LLM extraction found {} additional field references in {}", llmExtractedFields.size(), file.getName());
+            }
+        } catch (Exception e) {
+            log.warn("LLM-based field extraction failed for {}: {}. Continuing with regex-only results.", file.getName(), e.getMessage());
+        }
+        
+        // Final summary
+        long totalFieldReferences = tags.stream().filter(t -> t.getCategory().equals("ACLF_FIELD_REFERENCE")).count();
+        long totalDatafieldReferences = tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD_REFERENCE")).count();
+        log.info("Final parsing summary for {}: {} total symbols ({} FieldReferences, {} DatafieldReferences)", 
+                file.getName(), tags.size(), totalFieldReferences, totalDatafieldReferences);
+    }
+    
+    /**
+     * Use LLM to extract field references from unknown/complex patterns
+     * This complements regex patterns by catching patterns we haven't seen before
+     */
+    private List<ParsedSymbol> extractFieldsWithLLM(String content, File file, java.util.Set<String> alreadyExtracted) {
+        List<ParsedSymbol> llmFields = new ArrayList<>();
+        
+        // Only use LLM for files that are reasonably sized (avoid token limits)
+        if (content.length() > 50000) { // Skip very large files
+            log.debug("Skipping LLM extraction for large file {} ({} chars)", file.getName(), content.length());
+            return llmFields;
+        }
+        
+        // Sample a representative portion if file is large
+        String contentSample = content;
+        if (content.length() > 20000) {
+            // Take first 10k and last 10k chars to get structure and examples
+            int sampleSize = 10000;
+            contentSample = content.substring(0, Math.min(sampleSize, content.length())) + 
+                          "\n\n... [middle section truncated] ...\n\n" +
+                          content.substring(Math.max(0, content.length() - sampleSize));
+        }
+        
+        String prompt = String.format("""
+            You are analyzing an ACLF (Application Configuration Language File) to extract field references and data definitions.
+            
+            The file content (sample):
+            %s
+            
+            Extract ALL field references, datafield names, and identifiers that represent data elements.
+            Look for:
+            1. Field references in any format (FQDF.XXX.YYY, XXX.YYY, standalone identifiers)
+            2. Datafield definitions in any structure (not just the patterns we know)
+            3. Variable names, field names, identifiers used in assignments, expressions, function calls
+            4. Any other data elements that should be tracked
+            
+            Return a JSON array of extracted fields. For each field, provide:
+            {
+              "name": "field_name",
+              "category": "ACLF_FIELD_REFERENCE" or "ACLF_DATAFIELD_REFERENCE",
+              "type": "brief description of context",
+              "line": approximate line number if visible
+            }
+            
+            Focus on extracting fields that might not be caught by standard regex patterns.
+            Return ONLY valid JSON array, no other text.
+            """, contentSample);
+        
+        try {
+            String response = chatClientBuilder.build()
+                    .prompt(prompt)
+                    .call()
+                    .content();
+            
+            // Parse LLM response (JSON array)
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            com.fasterxml.jackson.databind.JsonNode jsonArray = mapper.readTree(response);
+            
+            if (jsonArray.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode fieldNode : jsonArray) {
+                    String fieldName = fieldNode.has("name") ? fieldNode.get("name").asText() : null;
+                    String category = fieldNode.has("category") ? fieldNode.get("category").asText() : "ACLF_FIELD_REFERENCE";
+                    String type = fieldNode.has("type") ? fieldNode.get("type").asText() : "LLM-extracted";
+                    int line = fieldNode.has("line") ? fieldNode.get("line").asInt() : 1;
+                    
+                    if (fieldName != null && !fieldName.trim().isEmpty()) {
+                        // Check if we already extracted this field
+                        String uniqueKey = category + "." + fieldName;
+                        if (!alreadyExtracted.contains(uniqueKey)) {
+                            alreadyExtracted.add(uniqueKey);
+                            
+                            ParsedSymbol ps = new ParsedSymbol();
+                            ps.setName(fieldName.trim());
+                            ps.setCategory(category);
+                            ps.setType(type);
+                            ps.setStartLine(line);
+                            ps.setEndLine(line);
+                            llmFields.add(ps);
+                            log.debug("LLM extracted field: {} (category: {})", fieldName, category);
+                        }
+                    }
+                }
+            }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.warn("Failed to parse LLM response as JSON for {}: {}", file.getName(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("LLM field extraction failed for {}: {}", file.getName(), e.getMessage());
+        }
+        
+        return llmFields;
     }
 }
