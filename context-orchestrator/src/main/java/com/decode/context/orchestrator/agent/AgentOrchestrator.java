@@ -1206,10 +1206,25 @@ public class AgentOrchestrator {
                     .topK(intent.getRecommendedTopK());
                 results = vectorStore.similaritySearch(unfilteredBuilder.build());
                 
-                // Filter results by checking symbol's source file project association
+                // Filter results using project_id from metadata directly (faster than DB lookup)
                 if (!results.isEmpty()) {
-                    log.info("Found {} documents without filter, will filter by project association", results.size());
-                    results = filterByProjectAssociation(results, domain);
+                    log.info("Found {} documents without filter, will filter by project ID from metadata", results.size());
+                    int beforeSize = results.size();
+                    results = filterByProjectId(results, projectIds);
+                    if (results.isEmpty() && !projectIds.isEmpty() && beforeSize > 0) {
+                        log.warn("⚠️ After filtering by project_id from metadata, 0 documents matched (was {}). Checking first document's metadata...", beforeSize);
+                        // Debug: Check first document's metadata
+                        Document firstDoc = results.isEmpty() ? null : results.get(0);
+                        if (firstDoc == null && !results.isEmpty()) {
+                            // Get first doc from original results before filtering
+                            var originalResults = vectorStore.similaritySearch(unfilteredBuilder.build());
+                            if (!originalResults.isEmpty()) {
+                                firstDoc = originalResults.get(0);
+                                log.warn("First document metadata project_id: {}, Looking for: {}", 
+                                    firstDoc.getMetadata().get("project_id"), projectIds);
+                            }
+                        }
+                    }
                 }
             }
         } else if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
@@ -1239,7 +1254,39 @@ public class AgentOrchestrator {
     }
     
     /**
+     * Fast filtering: Filter documents by project_id from metadata (no DB lookup needed)
+     */
+    private List<Document> filterByProjectId(List<Document> docs, List<UUID> projectIds) {
+        if (projectIds == null || projectIds.isEmpty()) {
+            return docs; // No filtering if no project IDs
+        }
+        
+        Set<UUID> projectIdSet = new java.util.HashSet<>(projectIds);
+        List<Document> filtered = new ArrayList<>();
+        
+        for (Document doc : docs) {
+            String projectIdStr = (String) doc.getMetadata().get("project_id");
+            if (projectIdStr != null) {
+                try {
+                    UUID docProjectId = UUID.fromString(projectIdStr);
+                    if (projectIdSet.contains(docProjectId)) {
+                        filtered.add(doc);
+                    }
+                } catch (IllegalArgumentException e) {
+                    log.debug("Invalid project_id in metadata: {}", projectIdStr);
+                }
+            }
+        }
+        
+        log.info("Filtered {} documents to {} matching project IDs (direct metadata filtering)", 
+            docs.size(), filtered.size());
+        
+        return filtered;
+    }
+    
+    /**
      * Fallback filtering: Filter documents by checking if their symbols belong to the specified project
+     * (Uses DB lookup - slower but works when metadata doesn't have project_id)
      */
     private List<Document> filterByProjectAssociation(List<Document> docs, String domainOrProject) {
         List<Document> filtered = new ArrayList<>();
