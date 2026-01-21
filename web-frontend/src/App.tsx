@@ -7,6 +7,7 @@ import { LineageGraph } from './components/LineageGraph';
 import { IngestionPortal } from './components/IngestionPortal';
 import { SemanticSearch } from './components/SemanticSearch';
 import { RefineDialog } from './components/RefineDialog';
+import { ProjectSelector } from './components/ProjectSelector';
 import { AnimatePresence } from 'framer-motion';
 import { api } from './services/api';
 import type { ProjectMetrics, LogicMapping, Project } from './services/api';
@@ -16,6 +17,7 @@ function App() {
   const [mappings, setMappings] = useState<LogicMapping[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>('');
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([]); // Multi-select support
   const [ambiguities, setAmbiguities] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'ingestion' | 'explorer'>('dashboard');
   const [blueprints, setBlueprints] = useState<any[]>([]);
@@ -46,10 +48,30 @@ function App() {
     api.getProjects().then(res => {
       setProjects(res.data);
       if (res.data.length > 0) {
-        setSelectedProject(res.data[0].name);
+        const firstProject = res.data[0].name;
+        setSelectedProject(firstProject);
+        setSelectedProjects([firstProject]); // Initialize multi-select
       }
     }).catch(err => console.error("Failed to fetch projects", err));
   }, []);
+
+  // Handle project selection changes (single or multi)
+  useEffect(() => {
+    // If single project is selected via old method, sync to multi-select
+    if (selectedProject && !selectedProjects.includes(selectedProject)) {
+      setSelectedProjects([selectedProject]);
+    }
+  }, [selectedProject]);
+
+  // Handle multi-select changes - use first selected for single-select compatibility
+  const handleProjectSelectionChange = (selected: string[]) => {
+    setSelectedProjects(selected);
+    if (selected.length > 0) {
+      setSelectedProject(selected[0]); // Use first selected for backward compatibility
+    } else {
+      setSelectedProject('');
+    }
+  };
 
   useEffect(() => {
     if (!selectedProject) return;
@@ -342,46 +364,19 @@ function App() {
           borderBottom: activeTab === 'explorer' ? '1px solid rgba(255,255,255,0.05)' : 'none',
           background: activeTab === 'explorer' ? '#0a0b10' : 'transparent'
         }}>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <div className="glass-panel" style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 16px', borderRadius: '12px' }}>
-              <GitBranch size={16} color="var(--primary)" />
-              <select
-                value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value)}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 600,
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="" disabled>Select Context</option>
-
-                {/* 1. DOMAIN GROUPS */}
-                <optgroup label="Project Groups">
-                  {Array.from(new Set(projects.map(p => p.domain).filter(d => d && d !== 'General'))).map(domain => (
-                    <option key={`domain-${domain}`} value={`DOMAIN:${domain}`} style={{ background: '#0f172a' }}>
-                      📂 {domain} (Group)
-                    </option>
-                  ))}
-                </optgroup>
-
-                {/* 2. INDIVIDUAL PROJECTS */}
-                <optgroup label="Individual Projects">
-                  {projects.map(p => (
-                    <option key={p.id} value={p.name} style={{ background: '#0f172a' }}>
-                      {p.name}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
-            </div>
+          <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <ProjectSelector
+              projects={projects}
+              selectedProjects={selectedProjects}
+              onSelectionChange={handleProjectSelectionChange}
+              showGroups={true}
+              multiSelect={true}
+            />
             {selectedProject && (
               <div style={{ fontSize: '11px', color: '#64748b' }}>
-                Active Environment: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{selectedProject}</span>
+                Active: <span style={{ color: 'var(--primary)', fontWeight: 600 }}>
+                  {selectedProjects.length > 1 ? `${selectedProjects.length} projects` : selectedProject}
+                </span>
               </div>
             )}
           </div>
