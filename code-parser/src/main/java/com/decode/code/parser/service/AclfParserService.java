@@ -12,6 +12,7 @@ import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +31,12 @@ public class AclfParserService implements LanguageParser {
     private final SourceFileRepository sourceFileRepository;
     private final ChatClient.Builder chatClientBuilder;
     private final XmlMapper xmlMapper = new XmlMapper();
+    
+    @Value("${parser.aclf.llm-extraction.enabled:true}")
+    private boolean llmExtractionEnabled;
+    
+    @Value("${parser.aclf.llm-extraction.max-file-size:50000}")
+    private int maxFileSizeForLLM;
 
     @Override
     public boolean supports(File file) {
@@ -509,14 +516,18 @@ public class AclfParserService implements LanguageParser {
         
         // HYBRID APPROACH: Use LLM to extract additional field references from unknown patterns
         // This catches patterns that regex might miss (nested structures, complex expressions, etc.)
-        try {
-            List<ParsedSymbol> llmExtractedFields = extractFieldsWithLLM(content, file, uniqueFieldReferences);
-            if (!llmExtractedFields.isEmpty()) {
-                tags.addAll(llmExtractedFields);
-                log.info("LLM extraction found {} additional field references in {}", llmExtractedFields.size(), file.getName());
+        if (llmExtractionEnabled) {
+            try {
+                List<ParsedSymbol> llmExtractedFields = extractFieldsWithLLM(content, file, uniqueFieldReferences);
+                if (!llmExtractedFields.isEmpty()) {
+                    tags.addAll(llmExtractedFields);
+                    log.info("LLM extraction found {} additional field references in {}", llmExtractedFields.size(), file.getName());
+                }
+            } catch (Exception e) {
+                log.warn("LLM-based field extraction failed for {}: {}. Continuing with regex-only results.", file.getName(), e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("LLM-based field extraction failed for {}: {}. Continuing with regex-only results.", file.getName(), e.getMessage());
+        } else {
+            log.debug("LLM extraction is disabled. Using regex patterns only.");
         }
         
         // Final summary
@@ -534,8 +545,8 @@ public class AclfParserService implements LanguageParser {
         List<ParsedSymbol> llmFields = new ArrayList<>();
         
         // Only use LLM for files that are reasonably sized (avoid token limits)
-        if (content.length() > 50000) { // Skip very large files
-            log.debug("Skipping LLM extraction for large file {} ({} chars)", file.getName(), content.length());
+        if (content.length() > maxFileSizeForLLM) {
+            log.debug("Skipping LLM extraction for large file {} ({} chars, max: {})", file.getName(), content.length(), maxFileSizeForLLM);
             return llmFields;
         }
         
