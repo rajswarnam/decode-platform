@@ -10,9 +10,10 @@ import { AnalysisPlanSidebar } from './AnalysisPlanSidebar';
 interface SemanticSearchProps {
     selectedBlueprintPath?: string | null;
     domain: string;
+    selectedProjects?: string[]; // Multi-select support
 }
 
-export const SemanticSearch = ({ selectedBlueprintPath, domain }: SemanticSearchProps) => {
+export const SemanticSearch = ({ selectedBlueprintPath, domain, selectedProjects = [] }: SemanticSearchProps) => {
     const [query, setQuery] = useState('');
     const [answer, setAnswer] = useState('');
     const [loading, setLoading] = useState(false);
@@ -73,10 +74,21 @@ export const SemanticSearch = ({ selectedBlueprintPath, domain }: SemanticSearch
         const THROTTLE_MS = 16;
 
         try {
+            // If multiple projects selected, pass them as array
+            // Backend will handle multiple projects
+            const requestBody: any = { 
+                query, 
+                domain: domain || 'General' 
+            };
+            if (selectedProjects.length > 1) {
+                requestBody.projects = selectedProjects;
+                console.log('Multi-project query:', selectedProjects.length, 'projects:', selectedProjects);
+            }
+            
             const response = await fetch('http://localhost:8082/api/v1/explore/query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query, domain: domain || 'General' }),
+                body: JSON.stringify(requestBody),
             });
 
             if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);

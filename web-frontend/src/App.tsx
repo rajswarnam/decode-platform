@@ -419,6 +419,7 @@ function App() {
             <SemanticSearch
               selectedBlueprintPath={selectedBlueprint}
               domain={selectedProject.startsWith('DOMAIN:') ? selectedProject.substring(7) : selectedProject}
+              selectedProjects={selectedProjects}
             />
           </section>
         )}

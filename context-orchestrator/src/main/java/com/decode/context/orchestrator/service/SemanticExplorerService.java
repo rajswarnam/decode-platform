@@ -50,6 +50,16 @@ public class SemanticExplorerService {
 
     public void exploreStream(String query, String domain, Consumer<String> progressConsumer,
             Consumer<String> answerChunkConsumer) {
+        exploreStream(query, domain, Collections.emptyList(), progressConsumer, answerChunkConsumer);
+    }
+    
+    public void exploreStream(String query, String domain, List<String> projectNames, Consumer<String> progressConsumer,
+            Consumer<String> answerChunkConsumer) {
+        exploreStream(query, domain, projectNames, Collections.emptyList(), progressConsumer, answerChunkConsumer);
+    }
+    
+    public void exploreStream(String query, String domain, List<String> projectNames, List<UUID> projectIds, Consumer<String> progressConsumer,
+            Consumer<String> answerChunkConsumer) {
         log.info("Executing Discovery: '{}'", query);
         
         String queryLower = query.toLowerCase();
@@ -70,7 +80,7 @@ public class SemanticExplorerService {
         // 1. META-CONTEXT INJECTION & AGENT SWARM (For domain-aware queries)
         if (needsAgentSwarm) {
             progressConsumer.accept("Initiating Decode Protocol: Multi-Agent Swarm Activation...");
-            injectProjectStructure(contextBuilder, domain, progressConsumer);
+            injectProjectStructure(contextBuilder, domain, projectNames, progressConsumer);
             
             // Delegate to Agent Orchestrator (includes Lexical Scout + Workers + QA)
             // Pass domain for project filtering
@@ -81,7 +91,20 @@ public class SemanticExplorerService {
 
         // 2. DIVERSE VECTOR SEARCH
         var broadSearch = SearchRequest.builder().query(query).topK(100);
-        if (domain != null && !domain.equalsIgnoreCase("General")) {
+        // If multiple projects selected, filter by project_id; otherwise use domain filter
+        if (!projectIds.isEmpty() && projectIds.size() > 1) {
+            // Multiple projects: build OR filter for project IDs
+            String filterExpr = projectIds.stream()
+                .map(id -> "project_id == '" + id.toString() + "'")
+                .collect(Collectors.joining(" OR "));
+            broadSearch.filterExpression("(" + filterExpr + ")");
+            log.info("Multi-project vector search: filtering by {} project IDs", projectIds.size());
+        } else if (!projectIds.isEmpty() && projectIds.size() == 1) {
+            // Single project ID
+            broadSearch.filterExpression("project_id == '" + projectIds.get(0).toString() + "'");
+            log.debug("Single project vector search: filtering by project_id {}", projectIds.get(0));
+        } else if (domain != null && !domain.equalsIgnoreCase("General")) {
+            // Fallback to domain filter if no project IDs resolved
             broadSearch.filterExpression("domain == '" + domain + "'");
         }
         List<Document> allResults = new ArrayList<>(vectorStore.similaritySearch(broadSearch.build()));
@@ -173,15 +196,27 @@ public class SemanticExplorerService {
             progressConsumer.accept("Analysis complete.");
     }
     
-    private void injectProjectStructure(StringBuilder context, String domain, Consumer<String> progressConsumer) {
+    private void injectProjectStructure(StringBuilder context, String domain, List<String> projectNames, Consumer<String> progressConsumer) {
         if (progressConsumer != null) progressConsumer.accept("Mapping Project Anatomy (Modules & Configs)...");
         
         context.append("\n=== PROJECT ANATOMY & STRUCTURE ===\n");
         
-        // 1. List Modules/Projects - FILTER BY DOMAIN/PROJECT IF SPECIFIED
+        // 1. List Modules/Projects - FILTER BY PROJECT NAMES IF MULTIPLE SELECTED
         List<com.decode.context.orchestrator.domain.Project> projects;
-        if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
-            // Try to find by project name first
+        if (!projectNames.isEmpty() && projectNames.size() > 1) {
+            // Multiple projects selected: find by exact name match
+            projects = new ArrayList<>();
+            for (String projectName : projectNames) {
+                Optional<com.decode.context.orchestrator.domain.Project> byName = projectRepository.findByName(projectName);
+                if (byName.isPresent()) {
+                    projects.add(byName.get());
+                } else {
+                    log.warn("Project not found: {}", projectName);
+                }
+            }
+            if (progressConsumer != null) progressConsumer.accept("Filtering by " + projects.size() + " selected projects");
+        } else if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+            // Single project/domain: Try to find by project name first
             Optional<com.decode.context.orchestrator.domain.Project> byName = projectRepository.findByName(domain);
             if (byName.isPresent()) {
                 // Exact match - single project

@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -74,16 +75,52 @@ public class SemanticExplorerController {
 
         @PostMapping(value = "/query", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
         public org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody query(
-                        @RequestBody Map<String, String> request) {
-                String query = request.get("query");
-                String domain = request.getOrDefault("domain", "General");
+                        @RequestBody Map<String, Object> request) {
+                String query = (String) request.get("query");
+                String domain = (String) request.getOrDefault("domain", "General");
+                
+                // Support multiple projects: if "projects" array is provided, use it
+                // Otherwise, check if domain is comma-separated list
+                List<String> projectNames = new ArrayList<>();
+                List<UUID> projectIds = new ArrayList<>();
+                
+                if (request.containsKey("projects") && request.get("projects") instanceof List) {
+                    @SuppressWarnings("unchecked")
+                    List<String> projectsList = (List<String>) request.get("projects");
+                    projectNames.addAll(projectsList);
+                    
+                    // Convert project names to IDs for vector search filtering
+                    for (String projectName : projectNames) {
+                        projectRepository.findByName(projectName).ifPresent(p -> {
+                            projectIds.add(p.getId());
+                        });
+                    }
+                    log.info("Multi-project query: {} projects selected ({} IDs resolved)", projectNames.size(), projectIds.size());
+                } else if (domain != null && domain.contains(",")) {
+                    // Comma-separated project names
+                    projectNames = Arrays.asList(domain.split(","));
+                    for (String projectName : projectNames) {
+                        projectRepository.findByName(projectName.trim()).ifPresent(p -> {
+                            projectIds.add(p.getId());
+                        });
+                    }
+                    log.info("Multi-project query (comma-separated): {} projects ({} IDs resolved)", projectNames.size(), projectIds.size());
+                } else {
+                    // Single project/domain
+                    projectNames.add(domain);
+                    projectRepository.findByName(domain).ifPresent(p -> {
+                        projectIds.add(p.getId());
+                    });
+                }
 
                 return outputStream -> {
                         java.io.PrintWriter writer = new java.io.PrintWriter(new java.io.OutputStreamWriter(
                                         outputStream, java.nio.charset.StandardCharsets.UTF_8));
 
                         try {
-                                explorerService.exploreStream(query, domain,
+                                // Pass first project name for backward compatibility, but also pass full list and IDs
+                                String primaryDomain = projectNames.isEmpty() ? domain : projectNames.get(0);
+                                explorerService.exploreStream(query, primaryDomain, projectNames, projectIds,
                                                 progress -> {
                                                         writer.write("event: progress\n");
                                                         writer.write("data: " + progress + "\n\n");
