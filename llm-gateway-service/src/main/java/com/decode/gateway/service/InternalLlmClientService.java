@@ -551,10 +551,16 @@ public class InternalLlmClientService {
             
             int truncatedTokenCount = truncatedTokens.size();
             int removedChars = message.length() - truncated.length();
+            double percentRemoved = (removedChars * 100.0) / message.length();
             
             log.warn("✅ Truncated message: {} tokens → {} tokens (removed {} chars, {:.1f}% of original)", 
-                    tokenCount, truncatedTokenCount, removedChars, 
-                    (removedChars * 100.0) / message.length());
+                    tokenCount, truncatedTokenCount, removedChars, percentRemoved);
+            
+            // Log payload when truncation occurs (for debugging)
+            log.warn("📋 Original Message (before truncation, first 1000 chars): {}", 
+                    message.length() > 1000 ? message.substring(0, 1000) + "..." : message);
+            log.warn("📋 Truncated Message (after truncation, first 1000 chars): {}", 
+                    truncated.length() > 1000 ? truncated.substring(0, 1000) + "..." : truncated);
             
             // Add truncation notice to the message
             return truncated + "\n\n[Note: Message was truncated due to token limit. Original length: " + 

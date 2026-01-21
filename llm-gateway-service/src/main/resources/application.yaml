@@ -1,6 +1,11 @@
 server:
   port: 8081
 
+logging:
+  level:
+    com.decode.gateway.service.InternalLlmClientService: DEBUG  # DEBUG for general requests, WARN for issues
+    com.decode.gateway.service.DataPrivacyFilterService: WARN   # Only log when privacy issues occur
+
 spring:
   application:
     name: llm-gateway-service
