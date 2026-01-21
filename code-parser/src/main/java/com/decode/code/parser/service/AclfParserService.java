@@ -409,18 +409,20 @@ public class AclfParserService implements LanguageParser {
             }
         }
         
-        // Pattern 8: Extract field references from other assignment patterns
-        // Example: Field = XXXX.FIELDNAME or similar patterns
-        java.util.regex.Pattern fieldAssignmentPattern = java.util.regex.Pattern.compile(
-            "(?:Field|field|Data|data)\\s*=\\s*(?:FQDF\\.)?(\\w+)\\.(\\w+)(?:\\[\\d+\\])?", 
+        // Pattern 8: Extract FQDF field references from code (assignments, expressions, function calls)
+        // Example: FQDF.LOCAL.NUM10 = FQDF.LOCAL.NUM10 + FQDF.LOCAL.TZOFFSET;
+        // Example: FQDF.SYSTEM.CONDCODE, FQDF.MESSAGE.MSGPREFX
+        // This captures field references in Calculation/Transaction Execute() blocks
+        java.util.regex.Pattern fqdfFieldPattern = java.util.regex.Pattern.compile(
+            "FQDF\\.(\\w+)\\.(\\w+)(?:\\[\\d+\\])?", 
             java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
         );
-        java.util.regex.Matcher fieldAssignmentMatcher = fieldAssignmentPattern.matcher(content);
-        while (fieldAssignmentMatcher.find()) {
-            String containerName = fieldAssignmentMatcher.group(1);
-            String fieldName = fieldAssignmentMatcher.group(2);
+        java.util.regex.Matcher fqdfFieldMatcher = fqdfFieldPattern.matcher(content);
+        while (fqdfFieldMatcher.find()) {
+            String containerName = fqdfFieldMatcher.group(1); // e.g., LOCAL, SYSTEM, MESSAGE
+            String fieldName = fqdfFieldMatcher.group(2); // e.g., NUM10, TZOFFSET, CONDCODE
             
-            // Skip if already captured by Pattern 7
+            // Create a unique key to avoid duplicate symbols
             String uniqueKey = containerName + "." + fieldName;
             if (!uniqueFieldReferences.contains(uniqueKey)) {
                 uniqueFieldReferences.add(uniqueKey);
@@ -428,12 +430,68 @@ public class AclfParserService implements LanguageParser {
                 ParsedSymbol ps = new ParsedSymbol();
                 ps.setName(fieldName);
                 ps.setCategory("ACLF_FIELD_REFERENCE");
-                ps.setType("Field in " + containerName);
-                int lineNumber = content.substring(0, fieldAssignmentMatcher.start()).split("\n").length;
+                ps.setType("FQDF field in " + containerName);
+                int lineNumber = content.substring(0, fqdfFieldMatcher.start()).split("\n").length;
                 ps.setStartLine(lineNumber);
                 ps.setEndLine(lineNumber);
                 tags.add(ps);
-                log.debug("Found field reference (alternative pattern): {} in {}", fieldName, containerName);
+                log.debug("Found FQDF field reference: {} in {}", fieldName, containerName);
+            }
+        }
+        
+        // Pattern 9: Extract Datafield names from Datalist Entries
+        // Example: { Name = Datafield, [_BCMOPID]; Occurrences = 1; }
+        // Example: { Name = Datafield, [_BCMWSID]; Occurrences = 1; }
+        java.util.regex.Pattern datalistEntryPattern = java.util.regex.Pattern.compile(
+            "Name\\s*=\\s*Datafield\\s*,\\s*\\[(\\w+)\\]", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher datalistEntryMatcher = datalistEntryPattern.matcher(content);
+        while (datalistEntryMatcher.find()) {
+            String datafieldName = datalistEntryMatcher.group(1); // e.g., _BCMOPID, _BCMWSID
+            
+            // Create a unique key
+            String uniqueKey = "DATALIST_ENTRY." + datafieldName;
+            if (!uniqueFieldReferences.contains(uniqueKey)) {
+                uniqueFieldReferences.add(uniqueKey);
+                
+                ParsedSymbol ps = new ParsedSymbol();
+                ps.setName(datafieldName);
+                ps.setCategory("ACLF_DATAFIELD_REFERENCE");
+                ps.setType("Datafield in Datalist Entry");
+                int lineNumber = content.substring(0, datalistEntryMatcher.start()).split("\n").length;
+                ps.setStartLine(lineNumber);
+                ps.setEndLine(lineNumber);
+                tags.add(ps);
+                log.debug("Found Datafield in Datalist Entry: {}", datafieldName);
+            }
+        }
+        
+        // Pattern 10: Extract field references from function parameters
+        // Example: MoveToField(Source: FQDF.SYSTEM.COMPCODE, Target: FQDF.MESSAGE.MSGSUFFX)
+        // Example: ListAddItem(Reference: FQDF.FILLDDLB.REFDDLB, Value: FQDF._HOLPROF._HOLPFIO)
+        java.util.regex.Pattern functionParamPattern = java.util.regex.Pattern.compile(
+            "(?:Source|Target|Reference|Value|Enabler|Table|Index)\\s*:\\s*FQDF\\.(\\w+)\\.(\\w+)(?:\\[\\d+\\])?", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher functionParamMatcher = functionParamPattern.matcher(content);
+        while (functionParamMatcher.find()) {
+            String containerName = functionParamMatcher.group(1);
+            String fieldName = functionParamMatcher.group(2);
+            
+            String uniqueKey = containerName + "." + fieldName;
+            if (!uniqueFieldReferences.contains(uniqueKey)) {
+                uniqueFieldReferences.add(uniqueKey);
+                
+                ParsedSymbol ps = new ParsedSymbol();
+                ps.setName(fieldName);
+                ps.setCategory("ACLF_FIELD_REFERENCE");
+                ps.setType("Field in " + containerName + " (function parameter)");
+                int lineNumber = content.substring(0, functionParamMatcher.start()).split("\n").length;
+                ps.setStartLine(lineNumber);
+                ps.setEndLine(lineNumber);
+                tags.add(ps);
+                log.debug("Found field reference in function parameter: {} in {}", fieldName, containerName);
             }
         }
         
@@ -444,8 +502,9 @@ public class AclfParserService implements LanguageParser {
         long formReportCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FORM_REPORT")).count();
         long calculationCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_CALCULATION")).count();
         long fieldReferenceCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FIELD_REFERENCE")).count();
+        long datafieldReferenceCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD_REFERENCE")).count();
         
-        log.info("DSL parsing complete for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} FormBlocks, {} FormReports, {} Calculations, {} FieldReferences", 
-                file.getName(), tags.size(), datalistCount, datafieldCount, transactionCount, formBlockCount, formReportCount, calculationCount, fieldReferenceCount);
+        log.info("DSL parsing complete for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} FormBlocks, {} FormReports, {} Calculations, {} FieldReferences, {} DatafieldReferences", 
+                file.getName(), tags.size(), datalistCount, datafieldCount, transactionCount, formBlockCount, formReportCount, calculationCount, fieldReferenceCount, datafieldReferenceCount);
     }
 }
