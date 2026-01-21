@@ -64,6 +64,7 @@ public class AgentOrchestrator {
         private boolean complete; // NEW: Track completion status (changed from isComplete to avoid Lombok naming issue)
         private String errorMessage; // NEW: Store error if synthesis fails
         private String domain; // NEW: Store domain/project name for filtering
+        private List<UUID> projectIds; // NEW: Store project IDs for filtering
     }
     
     public CurrentExecutionPlan getCurrentPlan(String sessionId) {
@@ -71,7 +72,11 @@ public class AgentOrchestrator {
     }
 
     public String executeSwarm(String userQuery, String projectContext, String domain, Consumer<String> progressConsumer, Consumer<String> resultConsumer) {
-        log.info("Starting Agent Swarm for: {}", userQuery);
+        return executeSwarm(userQuery, projectContext, domain, Collections.emptyList(), Collections.emptyList(), progressConsumer, resultConsumer);
+    }
+    
+    public String executeSwarm(String userQuery, String projectContext, String domain, List<String> projectNames, List<UUID> projectIds, Consumer<String> progressConsumer, Consumer<String> resultConsumer) {
+        log.info("Starting Agent Swarm for: {} ({} projects, {} IDs)", userQuery, projectNames.size(), projectIds.size());
         
         // Generate session ID for plan tracking
         String sessionId = UUID.randomUUID().toString();
@@ -113,6 +118,7 @@ public class AgentOrchestrator {
             .qaReports(new ArrayList<>())
             .currentIteration(0)
             .domain(domain) // Store domain/project name for filtering
+            .projectIds(projectIds != null ? new ArrayList<>(projectIds) : new ArrayList<>()) // Store project IDs for filtering
             .build();
         activePlans.put(sessionId, executionPlan);
         
@@ -1005,9 +1011,9 @@ public class AgentOrchestrator {
         if (progressConsumer != null) progressConsumer.accept("🚀 Dispatching " + task.getPersona().getTitle() + " (" + mode + ") to analyse: " + task.getFocusArea());
 
         try {
-            // 1. Context Retrieval (RAG) - Pass query intent for dual-mode search and domain for filtering
+            // 1. Context Retrieval (RAG) - Pass query intent for dual-mode search and domain/project IDs for filtering
             QueryIntentAnalyzer.QueryIntent intent = executionPlan.getQueryIntent();
-            String context = retrieveContext(task, intent, executionPlan.getDomainMap(), executionPlan.getDomain());
+            String context = retrieveContext(task, intent, executionPlan.getDomainMap(), executionPlan.getDomain(), executionPlan.getProjectIds());
             
             if (context.isEmpty()) {
                 task.setReport("No relevant code found query (" + task.getFocusArea() + ")");
@@ -1086,7 +1092,7 @@ public class AgentOrchestrator {
         return task;
     }
 
-    private String retrieveContext(WorkerTask task, QueryIntentAnalyzer.QueryIntent intent, LexicalScoutAgent.DomainMap domainMap, String domain) {
+    private String retrieveContext(WorkerTask task, QueryIntentAnalyzer.QueryIntent intent, LexicalScoutAgent.DomainMap domainMap, String domain, List<UUID> projectIds) {
         // DUAL-MODE SEARCH: Comprehensive vs Focused
         List<Document> docs = new ArrayList<>();
         
@@ -1112,13 +1118,13 @@ public class AgentOrchestrator {
         
         if (intent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.COMPREHENSIVE) {
             // COMPREHENSIVE MODE: Broad coverage with module sampling
-            docs = retrieveContextComprehensive(task, searchQuery, intent, domainMap, domain);
+            docs = retrieveContextComprehensive(task, searchQuery, intent, domainMap, domain, projectIds);
         } else if (intent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.HYBRID) {
             // HYBRID MODE: Balanced approach
-            docs = retrieveContextHybrid(task, searchQuery, intent, domainMap, domain);
+            docs = retrieveContextHybrid(task, searchQuery, intent, domainMap, domain, projectIds);
         } else {
             // FOCUSED MODE: Targeted semantic search (original behavior)
-            docs = retrieveContextFocused(task, searchQuery, intent, domain);
+            docs = retrieveContextFocused(task, searchQuery, intent, domain, projectIds);
         }
         
         log.info("Vector search returned {} documents for worker {} (mode: {})", 
@@ -1169,14 +1175,45 @@ public class AgentOrchestrator {
      * FOCUSED MODE: Targeted semantic search (original behavior)
      * Uses single semantic search with standard topK
      */
-    private List<Document> retrieveContextFocused(WorkerTask task, String searchQuery, QueryIntentAnalyzer.QueryIntent intent, String domain) {
+    private List<Document> retrieveContextFocused(WorkerTask task, String searchQuery, QueryIntentAnalyzer.QueryIntent intent, String domain, List<UUID> projectIds) {
         var builder = SearchRequest.builder()
             .query(searchQuery)
             .topK(intent.getRecommendedTopK()); // Usually 50
         
-        // Filter by domain/project if specified
+        // Filter by project_id if available (more reliable than domain), otherwise use domain
         List<Document> results;
-        if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+        if (projectIds != null && !projectIds.isEmpty()) {
+            // Use project_id filtering (most reliable)
+            if (projectIds.size() > 1) {
+                // Multiple project IDs: OR condition
+                String filterExpr = projectIds.stream()
+                    .map(id -> "project_id == '" + id.toString() + "'")
+                    .collect(java.util.stream.Collectors.joining(" OR "));
+                builder.filterExpression("(" + filterExpr + ")");
+                log.debug("Filtering by {} project IDs: {}", projectIds.size(), filterExpr);
+            } else {
+                // Single project ID
+                builder.filterExpression("project_id == '" + projectIds.get(0).toString() + "'");
+                log.debug("Filtering by project_id: {}", projectIds.get(0));
+            }
+            results = vectorStore.similaritySearch(builder.build());
+            
+            // If filter returns 0 results, try without filter and use fallback filtering
+            if (results.isEmpty()) {
+                log.warn("Project ID filter returned 0 results, retrying without filter", domain);
+                var unfilteredBuilder = SearchRequest.builder()
+                    .query(searchQuery)
+                    .topK(intent.getRecommendedTopK());
+                results = vectorStore.similaritySearch(unfilteredBuilder.build());
+                
+                // Filter results by checking symbol's source file project association
+                if (!results.isEmpty()) {
+                    log.info("Found {} documents without filter, will filter by project association", results.size());
+                    results = filterByProjectAssociation(results, domain);
+                }
+            }
+        } else if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+            // Fallback to domain filtering (less reliable - domain might not match project name)
             builder.filterExpression("domain == '" + domain + "'");
             results = vectorStore.similaritySearch(builder.build());
             
@@ -1264,7 +1301,7 @@ public class AgentOrchestrator {
      */
     private List<Document> retrieveContextHybrid(WorkerTask task, String searchQuery, 
                                                  QueryIntentAnalyzer.QueryIntent intent, 
-                                                 LexicalScoutAgent.DomainMap domainMap, String domain) {
+                                                 LexicalScoutAgent.DomainMap domainMap, String domain, List<UUID> projectIds) {
         Set<Document> combinedDocs = new LinkedHashSet<>();
         
         // 1. Primary semantic search
@@ -1330,7 +1367,7 @@ public class AgentOrchestrator {
      */
     private List<Document> retrieveContextComprehensive(WorkerTask task, String searchQuery,
                                                        QueryIntentAnalyzer.QueryIntent intent,
-                                                       LexicalScoutAgent.DomainMap domainMap, String domain) {
+                                                       LexicalScoutAgent.DomainMap domainMap, String domain, List<UUID> projectIds) {
         Set<Document> combinedDocs = new LinkedHashSet<>();
         
         // 1. Primary semantic search (40% of results)
@@ -1338,7 +1375,27 @@ public class AgentOrchestrator {
             .query(searchQuery)
             .topK((int) (intent.getRecommendedTopK() * 0.4)); // ~80 documents
         List<Document> primaryResults;
-        if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
+        
+        // Use project_id filtering if available (more reliable than domain)
+        if (projectIds != null && !projectIds.isEmpty()) {
+            if (projectIds.size() > 1) {
+                String filterExpr = projectIds.stream()
+                    .map(id -> "project_id == '" + id.toString() + "'")
+                    .collect(java.util.stream.Collectors.joining(" OR "));
+                primaryBuilder.filterExpression("(" + filterExpr + ")");
+                log.debug("COMPREHENSIVE: Filtering by {} project IDs", projectIds.size());
+            } else {
+                primaryBuilder.filterExpression("project_id == '" + projectIds.get(0).toString() + "'");
+                log.debug("COMPREHENSIVE: Filtering by project_id: {}", projectIds.get(0));
+            }
+            primaryResults = vectorStore.similaritySearch(primaryBuilder.build());
+            if (primaryResults.isEmpty()) {
+                log.warn("⚠️ Project ID filter returned 0 results in comprehensive mode, retrying without filter");
+                var unfiltered = SearchRequest.builder().query(searchQuery).topK((int) (intent.getRecommendedTopK() * 0.4)).build();
+                primaryResults = vectorStore.similaritySearch(unfiltered);
+                primaryResults = filterByProjectAssociation(primaryResults, domain);
+            }
+        } else if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
             log.debug("Applying Qdrant domain filter (COMPREHENSIVE): domain == '{}'", domain);
             primaryBuilder.filterExpression("domain == '" + domain + "'");
             primaryResults = vectorStore.similaritySearch(primaryBuilder.build());

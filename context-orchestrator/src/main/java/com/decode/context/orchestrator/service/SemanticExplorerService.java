@@ -83,8 +83,8 @@ public class SemanticExplorerService {
             injectProjectStructure(contextBuilder, domain, projectNames, progressConsumer);
             
             // Delegate to Agent Orchestrator (includes Lexical Scout + Workers + QA)
-            // Pass domain for project filtering
-            agentOrchestrator.executeSwarm(query, contextBuilder.toString(), domain, progressConsumer, 
+            // Pass domain, project names, and project IDs for filtering
+            agentOrchestrator.executeSwarm(query, contextBuilder.toString(), domain, projectNames, projectIds, progressConsumer, 
                finalBlueprint -> answerChunkConsumer.accept(finalBlueprint));
             return;
         }
