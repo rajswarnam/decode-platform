@@ -1183,51 +1183,35 @@ public class AgentOrchestrator {
         // Filter by project_id if available (more reliable than domain), otherwise use domain
         List<Document> results;
         if (projectIds != null && !projectIds.isEmpty()) {
-            // Use project_id filtering (most reliable)
-            if (projectIds.size() > 1) {
-                // Multiple project IDs: OR condition
-                String filterExpr = projectIds.stream()
-                    .map(id -> "project_id == '" + id.toString() + "'")
-                    .collect(java.util.stream.Collectors.joining(" OR "));
-                builder.filterExpression("(" + filterExpr + ")");
-                log.debug("Filtering by {} project IDs: {}", projectIds.size(), filterExpr);
-            } else {
-                // Single project ID
-                String projectIdStr = projectIds.get(0).toString();
-                builder.filterExpression("project_id == '" + projectIdStr + "'");
-                log.info("FOCUSED: Filtering by project_id: {} (Qdrant filter)", projectIdStr);
-            }
-            results = vectorStore.similaritySearch(builder.build());
-            log.info("FOCUSED: Qdrant project_id filter returned {} documents for project_id: {}", 
-                results.size(), projectIds.get(0));
+            // IMPORTANT: Skip Qdrant filtering and do it in Java instead
+            // Qdrant metadata filtering might not work correctly, so we'll do unfiltered search
+            // and filter in Java using metadata
+            log.info("FOCUSED: Skipping Qdrant project_id filter, will filter {} project IDs in Java after search", projectIds.size());
+            var unfilteredBuilder = SearchRequest.builder()
+                .query(searchQuery)
+                .topK(intent.getRecommendedTopK());
+            results = vectorStore.similaritySearch(unfilteredBuilder.build());
             
-            // If filter returns 0 results, try without filter and use fallback filtering
-            if (results.isEmpty()) {
-                log.warn("Project ID filter returned 0 results, retrying without filter", domain);
-                var unfilteredBuilder = SearchRequest.builder()
-                    .query(searchQuery)
-                    .topK(intent.getRecommendedTopK());
-                results = vectorStore.similaritySearch(unfilteredBuilder.build());
+            log.info("FOCUSED: Unfiltered search returned {} documents, filtering by project IDs in Java", results.size());
+            
+            // Filter results using project_id from metadata directly (faster than DB lookup)
+            if (!results.isEmpty()) {
+                int beforeSize = results.size();
+                results = filterByProjectId(results, projectIds);
+                log.info("FOCUSED: Filtered {} documents to {} matching project IDs", beforeSize, results.size());
                 
-                // Filter results using project_id from metadata directly (faster than DB lookup)
-                if (!results.isEmpty()) {
-                    log.info("Found {} documents without filter, will filter by project ID from metadata", results.size());
-                    int beforeSize = results.size();
-                    // Store original results for debug logging
-                    List<Document> originalResults = new ArrayList<>(results);
-                    results = filterByProjectId(results, projectIds);
-                    if (results.isEmpty() && !projectIds.isEmpty() && beforeSize > 0) {
-                        log.warn("⚠️ After filtering by project_id from metadata, 0 documents matched (was {}). Checking document metadata...", beforeSize);
-                        // Debug: Check first few documents' metadata
-                        int sampleSize = Math.min(5, originalResults.size());
-                        for (int i = 0; i < sampleSize; i++) {
-                            Document doc = originalResults.get(i);
-                            Object projectIdMeta = doc.getMetadata().get("project_id");
-                            log.warn("  Document {}: project_id={}, symbol_id={}, domain={}", 
-                                i + 1, projectIdMeta, doc.getMetadata().get("symbol_id"), doc.getMetadata().get("domain"));
-                        }
-                        log.warn("Looking for project IDs: {}", projectIds);
+                if (results.isEmpty() && beforeSize > 0) {
+                    log.warn("⚠️ Java filtering returned 0 matches. Checking document metadata...");
+                    // Debug: Check first few documents' metadata
+                    var unfilteredResults = vectorStore.similaritySearch(unfilteredBuilder.build());
+                    int sampleSize = Math.min(5, unfilteredResults.size());
+                    for (int i = 0; i < sampleSize; i++) {
+                        Document doc = unfilteredResults.get(i);
+                        Object projectIdMeta = doc.getMetadata().get("project_id");
+                        log.warn("  Document {}: project_id={}, symbol_id={}, domain={}", 
+                            i + 1, projectIdMeta, doc.getMetadata().get("symbol_id"), doc.getMetadata().get("domain"));
                     }
+                    log.warn("Looking for project IDs: {}", projectIds);
                 }
             }
         } else if (domain != null && !domain.isEmpty() && !domain.equalsIgnoreCase("General")) {
