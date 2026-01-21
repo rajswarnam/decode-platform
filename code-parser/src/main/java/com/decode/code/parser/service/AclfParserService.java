@@ -379,14 +379,73 @@ public class AclfParserService implements LanguageParser {
             }
         }
         
+        // Pattern 7: Extract field references from Data assignments
+        // Example: Data = FQDF.HSBKYCM.BCUSTID[1]; or Data = FQDF.BPBKYC.BCUSTID[1];
+        // These are field references within ExternalDatalist/Transaction blocks
+        java.util.regex.Pattern fieldReferencePattern = java.util.regex.Pattern.compile(
+            "Data\\s*=\\s*FQDF\\.(\\w+)\\.(\\w+)\\[\\d+\\]", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher fieldReferenceMatcher = fieldReferencePattern.matcher(content);
+        java.util.Set<String> uniqueFieldReferences = new java.util.HashSet<>(); // Track unique field names to avoid duplicates
+        while (fieldReferenceMatcher.find()) {
+            String datalistName = fieldReferenceMatcher.group(1); // e.g., HSBKYCM
+            String fieldName = fieldReferenceMatcher.group(2); // e.g., BCUSTID
+            
+            // Create a unique key to avoid duplicate symbols for the same field in same datalist
+            String uniqueKey = datalistName + "." + fieldName;
+            if (!uniqueFieldReferences.contains(uniqueKey)) {
+                uniqueFieldReferences.add(uniqueKey);
+                
+                ParsedSymbol ps = new ParsedSymbol();
+                ps.setName(fieldName);
+                ps.setCategory("ACLF_FIELD_REFERENCE");
+                ps.setType("Field in " + datalistName);
+                int lineNumber = content.substring(0, fieldReferenceMatcher.start()).split("\n").length;
+                ps.setStartLine(lineNumber);
+                ps.setEndLine(lineNumber);
+                tags.add(ps);
+                log.debug("Found field reference: {} in {}", fieldName, datalistName);
+            }
+        }
+        
+        // Pattern 8: Extract field references from other assignment patterns
+        // Example: Field = XXXX.FIELDNAME or similar patterns
+        java.util.regex.Pattern fieldAssignmentPattern = java.util.regex.Pattern.compile(
+            "(?:Field|field|Data|data)\\s*=\\s*(?:FQDF\\.)?(\\w+)\\.(\\w+)(?:\\[\\d+\\])?", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher fieldAssignmentMatcher = fieldAssignmentPattern.matcher(content);
+        while (fieldAssignmentMatcher.find()) {
+            String containerName = fieldAssignmentMatcher.group(1);
+            String fieldName = fieldAssignmentMatcher.group(2);
+            
+            // Skip if already captured by Pattern 7
+            String uniqueKey = containerName + "." + fieldName;
+            if (!uniqueFieldReferences.contains(uniqueKey)) {
+                uniqueFieldReferences.add(uniqueKey);
+                
+                ParsedSymbol ps = new ParsedSymbol();
+                ps.setName(fieldName);
+                ps.setCategory("ACLF_FIELD_REFERENCE");
+                ps.setType("Field in " + containerName);
+                int lineNumber = content.substring(0, fieldAssignmentMatcher.start()).split("\n").length;
+                ps.setStartLine(lineNumber);
+                ps.setEndLine(lineNumber);
+                tags.add(ps);
+                log.debug("Found field reference (alternative pattern): {} in {}", fieldName, containerName);
+            }
+        }
+        
         long datalistCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_EXTERNAL_DATALIST")).count();
         long datafieldCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD")).count();
         long transactionCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_TRANSACTION")).count();
         long formBlockCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FORM_BLOCK")).count();
         long formReportCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FORM_REPORT")).count();
         long calculationCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_CALCULATION")).count();
+        long fieldReferenceCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FIELD_REFERENCE")).count();
         
-        log.info("DSL parsing complete for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} FormBlocks, {} FormReports, {} Calculations", 
-                file.getName(), tags.size(), datalistCount, datafieldCount, transactionCount, formBlockCount, formReportCount, calculationCount);
+        log.info("DSL parsing complete for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} FormBlocks, {} FormReports, {} Calculations, {} FieldReferences", 
+                file.getName(), tags.size(), datalistCount, datafieldCount, transactionCount, formBlockCount, formReportCount, calculationCount, fieldReferenceCount);
     }
 }
