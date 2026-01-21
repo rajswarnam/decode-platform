@@ -129,7 +129,7 @@ export const ProjectSelector = ({
           cursor: 'pointer',
           userSelect: 'none',
           border: '1px solid rgba(255,255,255,0.1)',
-          minWidth: '280px'
+          minWidth: '400px'
         }}
       >
         <FileCode size={16} color="var(--primary)" />
@@ -171,7 +171,8 @@ export const ProjectSelector = ({
             position: 'absolute',
             top: '100%',
             left: 0,
-            right: 0,
+            minWidth: '600px',
+            maxWidth: '800px',
             marginTop: '8px',
             borderRadius: '12px',
             border: '1px solid rgba(255,255,255,0.1)',
