@@ -3,7 +3,7 @@ server:
 
 logging:
   level:
-    com.decode.gateway.service.InternalLlmClientService: DEBUG  # DEBUG for general requests, WARN for issues
+    com.decode.gateway.service.InternalLlmClientService: WARN   # Only log warnings/errors, not debug chunk logs
     com.decode.gateway.service.DataPrivacyFilterService: WARN   # Only log when privacy issues occur
 
 spring:
