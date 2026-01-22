@@ -17,6 +17,10 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping({"/api/parser", "/api/v1/parser"}) // Support both paths for backward compatibility
@@ -243,118 +247,128 @@ public class ParserController {
         System.out.println("========================================");
         System.out.println("GROUP TRIGGER: Found " + projects.size() + " projects");
         System.out.println("========================================");
+        System.out.flush();
         
-        // Trigger parsing for each project asynchronously
-        int triggeredCount = 0;
-        int errorCount = 0;
+        // Use a thread pool to limit concurrent threads (max 20 concurrent)
+        int maxConcurrentThreads = Math.min(20, projects.size());
+        ExecutorService executor = Executors.newFixedThreadPool(maxConcurrentThreads);
         
+        AtomicInteger completedCount = new AtomicInteger(0);
+        AtomicInteger errorCount = new AtomicInteger(0);
+        AtomicInteger submittedCount = new AtomicInteger(0);
+        
+        log.info("🚀 [GROUP] Using thread pool with {} concurrent threads for {} projects", maxConcurrentThreads, projects.size());
+        System.out.println("Using thread pool with " + maxConcurrentThreads + " concurrent threads");
+        System.out.flush();
+        
+        // Submit all tasks to the executor
         for (Project project : projects) {
-            try {
-                // IMMEDIATE SYNCHRONOUS LOGGING
-                System.out.println("Creating thread for project: " + project.getName() + " (ID: " + project.getId() + ")");
-                log.info("🔧 [GROUP] Creating thread for project: {} (ID: {})", project.getName(), project.getId());
+            final Project finalProject = project;
+            final String finalProjectName = project.getName();
+            final java.util.UUID finalProjectId = project.getId();
+            
+            executor.submit(() -> {
+                int currentSubmitted = submittedCount.incrementAndGet();
                 
-                final Project finalProject = project; // Make effectively final
-                final String finalProjectName = project.getName();
-                final java.util.UUID finalProjectId = project.getId();
-                
-                Thread projectThread = new Thread(() -> {
-                    // IMMEDIATE LOGGING IN THREAD - BEFORE ANYTHING ELSE
-                    // Use both System.out and System.err to ensure visibility
-                    System.out.println("========================================");
-                    System.out.println("THREAD STARTED: " + Thread.currentThread().getName());
-                    System.out.println("Project: " + finalProjectName);
-                    System.out.println("ID: " + finalProjectId);
-                    System.out.println("========================================");
-                    System.out.flush(); // Force immediate output
-                    
-                    // Also write to stderr for visibility
-                    System.err.println("[THREAD] " + Thread.currentThread().getName() + " - " + finalProjectName);
-                    System.err.flush();
-                    
-                    log.info("========================================");
-                    log.info("🔄 [GROUP THREAD START] Thread started for project: {} (ID: {})", finalProjectName, finalProjectId);
-                    log.info("🔄 [GROUP THREAD] Thread ID: {}, Thread Name: {}", Thread.currentThread().getId(), Thread.currentThread().getName());
-                    log.info("========================================");
-                    
-                    try {
-                        log.info("🔄 [GROUP THREAD] About to call parserService.processProject()");
-                        System.out.println("About to call parserService.processProject()");
-                        
-                        parserService.processProject(finalProject);
-                        
-                        log.info("🔄 [GROUP THREAD] parserService.processProject() completed");
-                        System.out.println("parserService.processProject() completed");
-                        
-                        log.info("✅ [GROUP THREAD COMPLETE] Successfully completed parsing for project: {}", finalProjectName);
-                    } catch (Exception e) {
-                        System.err.println("THREAD ERROR: " + e.getMessage());
-                        e.printStackTrace();
-                        log.error("❌ [GROUP THREAD ERROR] Error during parsing for project {} (ID: {}): {}", 
-                            finalProjectName, finalProjectId, e.getMessage(), e);
-                        log.error("❌ [GROUP THREAD ERROR] Exception type: {}", e.getClass().getName());
-                        log.error("❌ [GROUP THREAD ERROR] Stack trace:", e);
-                    } catch (Throwable t) {
-                        System.err.println("THREAD FATAL ERROR: " + t.getMessage());
-                        t.printStackTrace();
-                        log.error("❌ [GROUP THREAD FATAL] Fatal error during parsing for project {} (ID: {}): {}", 
-                            finalProjectName, finalProjectId, t.getMessage(), t);
-                    } finally {
-                        System.out.println("Thread finishing: " + Thread.currentThread().getName());
-                        log.info("🏁 [GROUP THREAD] Thread finishing for project: {}", finalProjectName);
-                    }
-                }, "GroupParserThread-" + project.getName() + "-" + project.getId());
-                
-                projectThread.setDaemon(false);
-                projectThread.setUncaughtExceptionHandler((t, e) -> {
-                    System.err.println("UNCAUGHT EXCEPTION IN THREAD: " + t.getName());
-                    e.printStackTrace();
-                    log.error("❌ [UNCAUGHT EXCEPTION] Thread: {}, Error: {}", t.getName(), e.getMessage(), e);
-                });
-                
-                log.info("🚀 [GROUP] About to start thread: {}", projectThread.getName());
-                System.out.println("Starting thread: " + projectThread.getName());
-                
-                projectThread.start();
-                
-                // Force flush logs immediately
-                System.out.flush();
-                System.err.flush();
-                
-                log.info("🚀 [GROUP THREAD LAUNCHED] Started parsing thread for project: {} (Thread: {}, State: {}, Alive: {})", 
-                    project.getName(), projectThread.getName(), projectThread.getState(), projectThread.isAlive());
-                System.out.println("Thread started: " + projectThread.getName() + ", State: " + projectThread.getState());
-                System.out.flush(); // Force immediate output
-                
-                triggeredCount++;
-                
-                // Small delay to avoid overwhelming the system with 333 threads at once
-                if (triggeredCount % 10 == 0) {
-                    log.info("📊 [GROUP] Progress: {} threads started out of {} projects", triggeredCount, projects.size());
-                    try {
-                        Thread.sleep(100); // 100ms delay every 10 threads
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    }
+                // Log progress every submission
+                if (currentSubmitted % 10 == 0 || currentSubmitted == 1) {
+                    System.out.println("📊 [GROUP] Submitted: " + currentSubmitted + " / " + projects.size());
+                    log.info("📊 [GROUP] Progress: {}/{} projects submitted to thread pool", currentSubmitted, projects.size());
+                    System.out.flush();
                 }
                 
-            } catch (Exception e) {
-                errorCount++;
-                System.err.println("ERROR CREATING THREAD: " + e.getMessage());
-                e.printStackTrace();
-                log.error("❌ [GROUP THREAD CREATE ERROR] Failed to create/start thread for project {}: {}", 
-                    project.getName(), e.getMessage(), e);
-            }
+                // IMMEDIATE LOGGING IN THREAD - BEFORE ANYTHING ELSE
+                System.out.println("========================================");
+                System.out.println("THREAD STARTED: " + Thread.currentThread().getName());
+                System.out.println("Project: " + finalProjectName);
+                System.out.println("ID: " + finalProjectId);
+                System.out.println("Progress: " + currentSubmitted + "/" + projects.size() + " submitted");
+                System.out.println("========================================");
+                System.out.flush();
+                
+                log.info("========================================");
+                log.info("🔄 [GROUP THREAD START] Thread started for project: {} (ID: {})", finalProjectName, finalProjectId);
+                log.info("🔄 [GROUP THREAD] Thread ID: {}, Thread Name: {}, Progress: {}/{}", 
+                    Thread.currentThread().getId(), Thread.currentThread().getName(), currentSubmitted, projects.size());
+                log.info("========================================");
+                
+                try {
+                    log.info("🔄 [GROUP THREAD] About to call parserService.processProject() for: {}", finalProjectName);
+                    System.out.println("About to call parserService.processProject() for: " + finalProjectName);
+                    System.out.flush();
+                    
+                    parserService.processProject(finalProject);
+                    
+                    int completed = completedCount.incrementAndGet();
+                    log.info("🔄 [GROUP THREAD] parserService.processProject() completed for: {}", finalProjectName);
+                    System.out.println("✅ Completed: " + finalProjectName + " (" + completed + "/" + projects.size() + " done)");
+                    System.out.flush();
+                    
+                    // Log progress every 10 completions
+                    if (completed % 10 == 0 || completed == projects.size()) {
+                        log.info("📊 [GROUP] Progress: {}/{} projects completed, {} errors", completed, projects.size(), errorCount.get());
+                        System.out.println("📊 [GROUP] Progress: " + completed + "/" + projects.size() + " completed, " + errorCount.get() + " errors");
+                        System.out.flush();
+                    }
+                    
+                    log.info("✅ [GROUP THREAD COMPLETE] Successfully completed parsing for project: {}", finalProjectName);
+                } catch (Exception e) {
+                    int errors = errorCount.incrementAndGet();
+                    System.err.println("❌ THREAD ERROR for " + finalProjectName + ": " + e.getMessage());
+                    System.err.println("Errors so far: " + errors);
+                    e.printStackTrace();
+                    System.err.flush();
+                    log.error("❌ [GROUP THREAD ERROR] Error during parsing for project {} (ID: {}): {}", 
+                        finalProjectName, finalProjectId, e.getMessage(), e);
+                    log.error("❌ [GROUP THREAD ERROR] Exception type: {}", e.getClass().getName());
+                } catch (Throwable t) {
+                    int errors = errorCount.incrementAndGet();
+                    System.err.println("❌ THREAD FATAL ERROR for " + finalProjectName + ": " + t.getMessage());
+                    t.printStackTrace();
+                    System.err.flush();
+                    log.error("❌ [GROUP THREAD FATAL] Fatal error during parsing for project {} (ID: {}): {}", 
+                        finalProjectName, finalProjectId, t.getMessage(), t);
+                } finally {
+                    int completed = completedCount.get();
+                    System.out.println("🏁 Thread finishing: " + Thread.currentThread().getName() + " (" + completed + "/" + projects.size() + " done)");
+                    log.info("🏁 [GROUP THREAD] Thread finishing for project: {} ({}/{})", finalProjectName, completed, projects.size());
+                    System.out.flush();
+                }
+            });
         }
         
-        System.out.println("========================================");
-        System.out.println("GROUP TRIGGER COMPLETE");
-        System.out.println("Total projects: " + projects.size());
-        System.out.println("Threads started: " + triggeredCount);
-        System.out.println("Errors: " + errorCount);
-        System.out.println("========================================");
+        // Start a background thread to log progress periodically
+        Thread progressLogger = new Thread(() -> {
+            try {
+                while (completedCount.get() + errorCount.get() < projects.size()) {
+                    Thread.sleep(5000); // Log every 5 seconds
+                    int completed = completedCount.get();
+                    int errors = errorCount.get();
+                    int total = completed + errors;
+                    log.info("📊 [GROUP PROGRESS] {}/{} projects completed ({} successful, {} errors)", 
+                        total, projects.size(), completed, errors);
+                    System.out.println("📊 [GROUP PROGRESS] " + total + "/" + projects.size() + " projects completed (" + completed + " successful, " + errors + " errors)");
+                    System.out.flush();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }, "GroupProgressLogger");
+        progressLogger.setDaemon(true);
+        progressLogger.start();
         
-        log.info("📊 [GROUP] Summary - Total: {}, Started: {}, Errors: {}", projects.size(), triggeredCount, errorCount);
+        // Shutdown executor (but don't wait for completion - return immediately)
+        executor.shutdown();
+        
+        System.out.println("========================================");
+        System.out.println("GROUP TRIGGER: All " + projects.size() + " projects submitted to thread pool");
+        System.out.println("Thread pool will process " + maxConcurrentThreads + " projects concurrently");
+        System.out.println("Check logs for progress updates every 5 seconds");
+        System.out.println("========================================");
+        System.out.flush();
+        
+        log.info("📊 [GROUP] Summary - Total: {}, Submitted: {}, Thread Pool Size: {}", 
+            projects.size(), submittedCount.get(), maxConcurrentThreads);
         
         Map<String, Object> response = new HashMap<>();
         response.put("message", "Parsing triggered for " + triggeredCount + " projects in group: " + groupName);
