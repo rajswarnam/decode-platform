@@ -11,15 +11,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestTemplate;
 
 import java.io.File;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @Slf4j
@@ -29,8 +35,14 @@ public class AclfParserService implements LanguageParser {
     private final AclfMappingRepository aclfMappingRepository;
     private final SymbolRepository symbolRepository;
     private final SourceFileRepository sourceFileRepository;
-    private final ChatClient.Builder chatClientBuilder;
+    private final RestTemplate restTemplate;
     private final XmlMapper xmlMapper = new XmlMapper();
+    
+    @Value("${llm.gateway.url:http://llm-gateway-service:8081}")
+    private String llmGatewayUrl;
+    
+    @Value("${llm.gateway.model:gpt-4o}")
+    private String llmModel;
     
     @Value("${parser.aclf.llm-extraction.enabled:true}")
     private boolean llmExtractionEnabled;
@@ -217,10 +229,8 @@ public class AclfParserService implements LanguageParser {
                 """, data);
 
         try {
-            String response = chatClientBuilder.build()
-                    .prompt(prompt)
-                    .call()
-                    .content();
+            // Call llm-gateway-service REST API instead of ChatClient
+            String response = callLlmGateway(prompt);
 
             // For now, we log the intent. In a full implementation, we'd parse the JSON and
             // link to the candidate symbol.
@@ -762,10 +772,7 @@ public class AclfParserService implements LanguageParser {
         
         String response = null;
         try {
-            response = chatClientBuilder.build()
-                    .prompt(prompt)
-                    .call()
-                    .content();
+            response = callLlmGateway(prompt);
             
             // Validate response before parsing
             if (response == null || response.trim().isEmpty()) {
@@ -842,5 +849,62 @@ public class AclfParserService implements LanguageParser {
         }
         
         return llmFields;
+    }
+    
+    /**
+     * Call llm-gateway-service REST API to get LLM response
+     * Uses the same endpoint and model (gpt-4o) as the rest of the system
+     */
+    private String callLlmGateway(String prompt) {
+        try {
+            String url = llmGatewayUrl + "/v1/chat/completions";
+            
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            
+            // Build request body matching ChatRequest format
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("model", llmModel);
+            requestBody.put("stream", false);
+            
+            List<Map<String, String>> messages = new ArrayList<>();
+            Map<String, String> userMessage = new HashMap<>();
+            userMessage.put("role", "user");
+            userMessage.put("content", prompt);
+            messages.add(userMessage);
+            requestBody.put("messages", messages);
+            
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(requestBody, headers);
+            
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, request, Map.class);
+            
+            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                Map<String, Object> body = response.getBody();
+                
+                // Extract content from OpenAI-compatible response format
+                // Response structure: { "choices": [ { "message": { "content": "..." } } ] }
+                if (body.containsKey("choices")) {
+                    List<Map<String, Object>> choices = (List<Map<String, Object>>) body.get("choices");
+                    if (!choices.isEmpty()) {
+                        Map<String, Object> firstChoice = choices.get(0);
+                        if (firstChoice.containsKey("message")) {
+                            Map<String, Object> message = (Map<String, Object>) firstChoice.get("message");
+                            if (message.containsKey("content")) {
+                                return (String) message.get("content");
+                            }
+                        }
+                    }
+                }
+                
+                log.warn("Unexpected response format from llm-gateway-service: {}", body);
+                return "";
+            } else {
+                log.error("LLM gateway returned non-2xx status: {}", response.getStatusCode());
+                return "";
+            }
+        } catch (Exception e) {
+            log.error("Error calling llm-gateway-service: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to call LLM gateway", e);
+        }
     }
 }
