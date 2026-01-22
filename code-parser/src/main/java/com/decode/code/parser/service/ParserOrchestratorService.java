@@ -56,8 +56,8 @@ public class ParserOrchestratorService {
         log.info("═══════════════════════════════════════════════════════════");
         
         try {
-            log.info("📋 [PARSER SERVICE] Project details - Name: {}, BasePath: {}, TechStack: {}", 
-                project.getName(), project.getBasePath(), project.getTechStack());
+            log.info("📋 [PARSER SERVICE] Project details - Name: {}, BasePath: {}", 
+                project.getName(), project.getBasePath());
             
             boolean symbolsFound = processProjectFromMinio(project);
             
