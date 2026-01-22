@@ -292,9 +292,12 @@ public class ParserOrchestratorService {
                 return false;
             }
 
-            // Log which parsers are available
-            if (totalFiles <= 10 || (totalFiles % 100 == 0)) {
-                log.info("🔍 [PARSER CHECK] Checking file: {} (extension: {})", objectKey, extension);
+            // Log which parsers are available (log first 10 files, then every 100th)
+            // We'll use a static counter or just log all ACLF files
+            boolean isAclfFile = objectKey.toLowerCase().contains("aclf") || extension.toLowerCase().equals(".aclf");
+            
+            if (isAclfFile) {
+                log.info("🔍 [PARSER CHECK] Checking ACLF file: {} (extension: {})", objectKey, extension);
                 log.info("🔍 [PARSER CHECK] Available parsers: {}", parsers.stream()
                     .map(p -> p.getClass().getSimpleName())
                     .collect(java.util.stream.Collectors.joining(", ")));
@@ -302,7 +305,7 @@ public class ParserOrchestratorService {
             
             for (LanguageParser parser : parsers) {
                 boolean supports = parser.supports(tempFile);
-                if (totalFiles <= 10 || (totalFiles % 100 == 0)) {
+                if (isAclfFile) {
                     log.info("🔍 [PARSER CHECK] Parser {} supports {}: {}", 
                         parser.getClass().getSimpleName(), objectKey, supports);
                 }
