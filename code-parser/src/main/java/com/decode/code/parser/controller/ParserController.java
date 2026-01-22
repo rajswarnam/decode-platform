@@ -31,59 +31,111 @@ public class ParserController {
 
     @PostMapping("/trigger")
     public ResponseEntity<Map<String, Object>> triggerParsing(@RequestParam UUID projectId) {
-        log.info("📥 Received trigger for parsing project ID: {}", projectId);
+        // IMMEDIATE SYNCHRONOUS LOGGING - This MUST appear in logs
+        System.out.println("========================================");
+        System.out.println("TRIGGER ENDPOINT CALLED - Project ID: " + projectId);
+        System.out.println("========================================");
+        log.info("========================================");
+        log.info("📥 [TRIGGER ENDPOINT] Received trigger for parsing project ID: {}", projectId);
+        log.info("📥 [TRIGGER ENDPOINT] Thread: {}, Timestamp: {}", Thread.currentThread().getName(), System.currentTimeMillis());
+        log.info("========================================");
         
-        java.util.Optional<Project> projectOpt = projectRepository.findById(projectId);
-        
-        if (projectOpt.isEmpty()) {
-            log.error("❌ Project with ID {} not found in code-parser database. Available projects: {}", 
-                projectId, projectRepository.findAll().stream().map(Project::getName).collect(java.util.stream.Collectors.toList()));
-            Map<String, Object> error = new HashMap<>();
-            error.put("error", "Project not found. Project may need to be synced to code-parser database.");
-            error.put("projectId", projectId.toString());
-            return ResponseEntity.status(org.springframework.http.HttpStatus.NOT_FOUND).body(error);
-        }
-        
-        Project project = projectOpt.get();
-        log.info("✅ Found project: {} (ID: {}). Starting parsing...", project.getName(), projectId);
-        
-        // Check current status before parsing
-        long symbolCountBefore = symbolRepository.countBySourceFile_Project_Id(projectId);
-        
-        // Async execution to avoid blocking the HTTP request
-        Thread parsingThread = new Thread(() -> {
-            try {
-                log.info("🔄 [THREAD START] Starting parsing thread for project: {} (ID: {})", project.getName(), projectId);
-                log.info("🔄 [THREAD] Thread ID: {}, Thread Name: {}", Thread.currentThread().getId(), Thread.currentThread().getName());
+        try {
+            java.util.Optional<Project> projectOpt = projectRepository.findById(projectId);
+            
+            if (projectOpt.isEmpty()) {
+                log.error("❌ [TRIGGER ENDPOINT] Project with ID {} not found in code-parser database.", projectId);
+                java.util.List<String> availableProjects = projectRepository.findAll().stream()
+                    .map(Project::getName)
+                    .collect(java.util.stream.Collectors.toList());
+                log.error("❌ [TRIGGER ENDPOINT] Available projects: {}", availableProjects);
                 
-                parserService.processProject(project);
-                
-                long symbolCountAfter = symbolRepository.countBySourceFile_Project_Id(projectId);
-                log.info("✅ [THREAD COMPLETE] Parsing completed for project: {}. Symbols: {} → {}", 
-                    project.getName(), symbolCountBefore, symbolCountAfter);
-            } catch (Exception e) {
-                log.error("❌ [THREAD ERROR] Error during parsing for project {} (ID: {}): {}", 
-                    project.getName(), projectId, e.getMessage(), e);
-                log.error("❌ [THREAD ERROR] Stack trace:", e);
-            } catch (Throwable t) {
-                log.error("❌ [THREAD FATAL] Fatal error during parsing for project {} (ID: {}): {}", 
-                    project.getName(), projectId, t.getMessage(), t);
+                Map<String, Object> error = new HashMap<>();
+                error.put("error", "Project not found. Project may need to be synced to code-parser database.");
+                error.put("projectId", projectId.toString());
+                error.put("availableProjects", availableProjects);
+                return ResponseEntity.status(org.springframework.http.HttpStatus.NOT_FOUND).body(error);
             }
-        }, "ParserThread-" + project.getName() + "-" + projectId);
-        
-        parsingThread.setDaemon(false); // Don't let thread die if main thread exits
-        parsingThread.start();
-        log.info("🚀 [THREAD LAUNCHED] Started parsing thread for project: {} (Thread: {})", project.getName(), parsingThread.getName());
-        
-        Map<String, Object> response = new HashMap<>();
-        response.put("message", "Parsing triggered for " + project.getName());
-        response.put("projectId", projectId.toString());
-        response.put("projectName", project.getName());
-        response.put("currentSymbolCount", symbolCountBefore);
-        response.put("status", "PARSING_IN_PROGRESS");
-        response.put("note", "Parsing is running asynchronously. Check logs or use /status endpoint to monitor progress.");
-        
-        return ResponseEntity.ok(response);
+            
+            Project project = projectOpt.get();
+            log.info("✅ [TRIGGER ENDPOINT] Found project: {} (ID: {})", project.getName(), projectId);
+            
+            // Check current status before parsing
+            long symbolCountBefore = symbolRepository.countBySourceFile_Project_Id(projectId);
+            log.info("📊 [TRIGGER ENDPOINT] Current symbol count: {}", symbolCountBefore);
+            
+            // Create thread with explicit error handling
+            final Project finalProject = project; // Make effectively final for lambda
+            final long finalSymbolCountBefore = symbolCountBefore;
+            
+            Thread parsingThread = new Thread(() -> {
+                // IMMEDIATE LOGGING IN THREAD
+                System.out.println("THREAD STARTED: " + Thread.currentThread().getName());
+                log.info("========================================");
+                log.info("🔄 [THREAD START] Thread started for project: {} (ID: {})", finalProject.getName(), projectId);
+                log.info("🔄 [THREAD] Thread ID: {}, Thread Name: {}", Thread.currentThread().getId(), Thread.currentThread().getName());
+                log.info("========================================");
+                
+                try {
+                    // Call the parser service
+                    log.info("🔄 [THREAD] About to call parserService.processProject()");
+                    parserService.processProject(finalProject);
+                    log.info("🔄 [THREAD] parserService.processProject() completed");
+                    
+                    long symbolCountAfter = symbolRepository.countBySourceFile_Project_Id(projectId);
+                    log.info("✅ [THREAD COMPLETE] Parsing completed for project: {}. Symbols: {} → {}", 
+                        finalProject.getName(), finalSymbolCountBefore, symbolCountAfter);
+                } catch (Exception e) {
+                    System.err.println("THREAD ERROR: " + e.getMessage());
+                    e.printStackTrace();
+                    log.error("❌ [THREAD ERROR] Error during parsing for project {} (ID: {}): {}", 
+                        finalProject.getName(), projectId, e.getMessage(), e);
+                    log.error("❌ [THREAD ERROR] Exception type: {}", e.getClass().getName());
+                    log.error("❌ [THREAD ERROR] Stack trace:", e);
+                } catch (Throwable t) {
+                    System.err.println("THREAD FATAL ERROR: " + t.getMessage());
+                    t.printStackTrace();
+                    log.error("❌ [THREAD FATAL] Fatal error during parsing for project {} (ID: {}): {}", 
+                        finalProject.getName(), projectId, t.getMessage(), t);
+                } finally {
+                    log.info("🏁 [THREAD] Thread finishing for project: {}", finalProject.getName());
+                }
+            }, "ParserThread-" + project.getName() + "-" + projectId);
+            
+            parsingThread.setDaemon(false);
+            parsingThread.setUncaughtExceptionHandler((t, e) -> {
+                System.err.println("UNCAUGHT EXCEPTION IN THREAD: " + t.getName());
+                e.printStackTrace();
+                log.error("❌ [UNCAUGHT EXCEPTION] Thread: {}, Error: {}", t.getName(), e.getMessage(), e);
+            });
+            
+            log.info("🚀 [TRIGGER ENDPOINT] About to start thread: {}", parsingThread.getName());
+            parsingThread.start();
+            log.info("🚀 [TRIGGER ENDPOINT] Thread started successfully: {}", parsingThread.getName());
+            log.info("🚀 [TRIGGER ENDPOINT] Thread state: {}, isAlive: {}", parsingThread.getState(), parsingThread.isAlive());
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("message", "Parsing triggered for " + project.getName());
+            response.put("projectId", projectId.toString());
+            response.put("projectName", project.getName());
+            response.put("currentSymbolCount", symbolCountBefore);
+            response.put("status", "PARSING_IN_PROGRESS");
+            response.put("threadName", parsingThread.getName());
+            response.put("threadState", parsingThread.getState().toString());
+            response.put("note", "Parsing is running asynchronously. Check logs or use /status endpoint to monitor progress.");
+            
+            log.info("✅ [TRIGGER ENDPOINT] Returning response for project: {}", project.getName());
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            System.err.println("ERROR IN TRIGGER ENDPOINT: " + e.getMessage());
+            e.printStackTrace();
+            log.error("❌ [TRIGGER ENDPOINT ERROR] Error in trigger endpoint: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Internal error: " + e.getMessage());
+            error.put("projectId", projectId.toString());
+            return ResponseEntity.status(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR).body(error);
+        }
     }
 
     @GetMapping("/status")

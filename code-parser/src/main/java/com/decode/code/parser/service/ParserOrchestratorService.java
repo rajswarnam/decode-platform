@@ -51,8 +51,17 @@ public class ParserOrchestratorService {
     private String vectorizerUrl;
 
     public void processProject(Project project) {
+        // IMMEDIATE SYSTEM.OUT FOR DEBUGGING
+        System.out.println("========================================");
+        System.out.println("PARSER SERVICE: processProject called");
+        System.out.println("Project: " + project.getName());
+        System.out.println("ID: " + project.getId());
+        System.out.println("Thread: " + Thread.currentThread().getName());
+        System.out.println("========================================");
+        
         log.info("═══════════════════════════════════════════════════════════");
         log.info("🚀 [PARSER SERVICE] Starting processProject for: {} (ID: {})", project.getName(), project.getId());
+        log.info("🚀 [PARSER SERVICE] Thread: {}", Thread.currentThread().getName());
         log.info("═══════════════════════════════════════════════════════════");
         
         try {
