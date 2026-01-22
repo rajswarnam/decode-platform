@@ -261,13 +261,15 @@ public class ParserOrchestratorService {
 
     private boolean processMinioObject(Project project, String objectKey) {
         File tempFile = null;
+        
+        // Extract extension outside try block so it's available later
+        String extension = "";
+        int i = objectKey.lastIndexOf('.');
+        if (i > 0) extension = objectKey.substring(i);
+        
         try {
             try (InputStream stream = minioClient.getObject(
                     GetObjectArgs.builder().bucket(bucketName).object(objectKey).build())) {
-
-                String extension = "";
-                int i = objectKey.lastIndexOf('.');
-                if (i > 0) extension = objectKey.substring(i);
 
                 // Log extension detection for ACLF files
                 if (objectKey.toLowerCase().contains("aclf") || extension.toLowerCase().equals(".aclf")) {
