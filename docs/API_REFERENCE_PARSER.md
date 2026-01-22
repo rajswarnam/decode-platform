@@ -5,8 +5,12 @@ This document provides a complete reference for the Code Parser API endpoints.
 ## Base URL
 
 ```
+http://localhost:8080/api/parser
+# OR (for backward compatibility)
 http://localhost:8080/api/v1/parser
 ```
+
+**Note:** Both paths are supported, but `/api/parser` is the primary path.
 
 ## Endpoints
 

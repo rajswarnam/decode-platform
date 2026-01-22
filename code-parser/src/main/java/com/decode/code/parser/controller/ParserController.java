@@ -18,17 +18,18 @@ import java.util.Map;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/api/parser")
+@RequestMapping({"/api/parser", "/api/v1/parser"}) // Support both paths for backward compatibility
 @RequiredArgsConstructor
 @Slf4j
 public class ParserController {
 
     private final ProjectRepository projectRepository;
     private final SymbolRepository symbolRepository;
+    private final SourceFileRepository sourceFileRepository;
     private final ParserOrchestratorService parserService;
 
     @PostMapping("/trigger")
-    public ResponseEntity<String> triggerParsing(@RequestParam UUID projectId) {
+    public ResponseEntity<Map<String, Object>> triggerParsing(@RequestParam UUID projectId) {
         log.info("📥 Received trigger for parsing project ID: {}", projectId);
         
         java.util.Optional<Project> projectOpt = projectRepository.findById(projectId);
@@ -36,23 +37,40 @@ public class ParserController {
         if (projectOpt.isEmpty()) {
             log.error("❌ Project with ID {} not found in code-parser database. Available projects: {}", 
                 projectId, projectRepository.findAll().stream().map(Project::getName).collect(java.util.stream.Collectors.toList()));
-            return ResponseEntity.status(org.springframework.http.HttpStatus.NOT_FOUND)
-                .body("Project not found. Project may need to be synced to code-parser database.");
+            Map<String, Object> error = new HashMap<>();
+            error.put("error", "Project not found. Project may need to be synced to code-parser database.");
+            error.put("projectId", projectId.toString());
+            return ResponseEntity.status(org.springframework.http.HttpStatus.NOT_FOUND).body(error);
         }
         
         Project project = projectOpt.get();
         log.info("✅ Found project: {} (ID: {}). Starting parsing...", project.getName(), projectId);
         
+        // Check current status before parsing
+        long symbolCountBefore = symbolRepository.countBySourceFile_Project_Id(projectId);
+        
         // Async execution to avoid blocking the HTTP request
         new Thread(() -> {
             try {
+                log.info("🔄 Starting parsing thread for project: {}", project.getName());
                 parserService.processProject(project);
+                long symbolCountAfter = symbolRepository.countBySourceFile_Project_Id(projectId);
+                log.info("✅ Parsing completed for project: {}. Symbols: {} → {}", 
+                    project.getName(), symbolCountBefore, symbolCountAfter);
             } catch (Exception e) {
                 log.error("❌ Error during parsing for project {}: {}", project.getName(), e.getMessage(), e);
             }
         }).start();
         
-        return ResponseEntity.ok("Parsing triggered for " + project.getName());
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "Parsing triggered for " + project.getName());
+        response.put("projectId", projectId.toString());
+        response.put("projectName", project.getName());
+        response.put("currentSymbolCount", symbolCountBefore);
+        response.put("status", "PARSING_IN_PROGRESS");
+        response.put("note", "Parsing is running asynchronously. Check logs or use /status endpoint to monitor progress.");
+        
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/status")
@@ -68,10 +86,25 @@ public class ParserController {
         Project project = projectOpt.get();
         long symbolCount = symbolRepository.countBySourceFile_Project_Id(projectId);
         
+        // Check if project has source files (to distinguish between "not parsed" vs "parsed but no symbols")
+        long sourceFileCount = sourceFileRepository.countByProject(project);
+        
         status.put("projectName", project.getName());
         status.put("projectId", projectId.toString());
         status.put("symbolCount", symbolCount);
-        status.put("status", symbolCount > 0 ? "COMPLETED" : "PENDING");
+        status.put("sourceFileCount", sourceFileCount);
+        
+        // Determine status more accurately
+        if (symbolCount > 0) {
+            status.put("status", "COMPLETED");
+            status.put("message", "Parsing completed successfully. Found " + symbolCount + " symbols.");
+        } else if (sourceFileCount > 0) {
+            status.put("status", "COMPLETED_NO_SYMBOLS");
+            status.put("message", "Parsing completed but no symbols were extracted. Check logs for details.");
+        } else {
+            status.put("status", "PENDING");
+            status.put("message", "Parsing not started or no files found. Trigger parsing via /trigger endpoint.");
+        }
         
         return ResponseEntity.ok(status);
     }
