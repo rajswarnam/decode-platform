@@ -25,6 +25,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 @Service
 @RequiredArgsConstructor
@@ -96,6 +97,36 @@ public class AgentOrchestrator {
         log.info("Query Intent: mode={}, topK={}, reasoning={}", intent.getMode(), intent.getRecommendedTopK(), intent.getReasoning());
         if (progressConsumer != null) {
             progressConsumer.accept("🎯 Analysis Mode: " + intent.getMode() + " (" + intent.getReasoning() + ")");
+        }
+
+        // NEW: Check if query can be answered by direct database query (skip LLM)
+        if (canAnswerWithDirectDatabase(userQuery, intent)) {
+            log.info("Query can be answered by direct database query - routing to DB query handler");
+            if (progressConsumer != null) {
+                progressConsumer.accept("📊 Direct Database Query: Retrieving structured data...");
+            }
+            
+            String dbResult = executeDirectDatabaseQuery(userQuery, domain, projectNames, projectIds, progressConsumer);
+            
+            // Store result in execution plan for UI transparency
+            CurrentExecutionPlan executionPlan = CurrentExecutionPlan.builder()
+                .userQuery(userQuery)
+                .projectContext(enrichedContext)
+                .domainMap(domainMap)
+                .queryIntent(intent)
+                .tasks(Collections.emptyList()) // No worker tasks needed
+                .qaReports(Collections.emptyList())
+                .currentIteration(0)
+                .domain(domain)
+                .projectIds(projectIds != null ? new ArrayList<>(projectIds) : new ArrayList<>())
+                .finalResult(dbResult) // Store direct DB result
+                .complete(true) // Mark as complete immediately
+                .build();
+            activePlans.put(sessionId, executionPlan);
+            
+            progressConsumer.accept("SESSION_ID:" + sessionId);
+            resultConsumer.accept(dbResult);
+            return sessionId;
         }
 
         // PHASE 1: ARCHITECT PLANNING (now with domain knowledge + query intent)
@@ -1956,5 +1987,380 @@ public class AgentOrchestrator {
         guidance.append("Do NOT select FRONTEND_REACT if the project only has HTML files.\n");
         
         return guidance.toString();
+    }
+    
+    /**
+     * Detects if a query can be answered by direct database query
+     * Returns true if query matches patterns for simple, structured lookups
+     */
+    private boolean canAnswerWithDirectDatabase(String query, QueryIntentAnalyzer.QueryIntent queryIntent) {
+        String q = query.toLowerCase().trim();
+        
+        // Pattern 1: List/Count queries for specific entities
+        // Examples: "list all fields for Transaction X", "show all ExternalDatalists"
+        boolean isListQuery = q.matches(".*\\b(list|show|get|find|count|all)\\s+(all\\s+)?(fields?|symbols?|transactions?|datalists?|datafields?|calculations?|formblocks?|formreports?).*");
+        
+        // Pattern 2: Transaction field queries
+        // Examples: "fields for Transaction VKWFLOSA", "what fields does Transaction X have"
+        boolean isTransactionFieldQuery = q.matches(".*\\b(fields?|symbols?)\\s+(for|in|of|related to)\\s+transaction\\s+\\w+.*");
+        
+        // Pattern 3: Entity lookup by name
+        // Examples: "ExternalDatalist A2AIMGO", "Transaction VKWFLOSA details"
+        boolean isEntityLookup = q.matches(".*\\b(externaldatalist|transaction|datafield|calculation|formblock|formreport)\\s+\\w+.*");
+        
+        // Pattern 4: Category-based queries
+        // Examples: "all ACLF transactions", "all ExternalDatalists in project X"
+        boolean isCategoryQuery = q.matches(".*\\b(all|list|show)\\s+(aclf_)?(transactions?|datalists?|datafields?|calculations?).*");
+        
+        // Pattern 5: Simple existence checks
+        // Examples: "does Transaction X exist", "is there a field named Y"
+        boolean isExistenceCheck = q.matches(".*\\b(does|is there|exists|exist|has|have)\\s+.*");
+        
+        // Combine patterns
+        boolean isSimpleQuery = isListQuery || isTransactionFieldQuery || isEntityLookup || isCategoryQuery || isExistenceCheck;
+        
+        // Additional checks:
+        // - Query should be focused (not comprehensive/blueprint)
+        // - Query should not require explanation or context
+        boolean requiresExplanation = q.matches(".*\\b(explain|describe|how|why|what is|tell me about|help me understand).*");
+        boolean isBlueprintQuery = q.matches(".*\\b(blueprint|overview|architecture|design|spec|brd|requirements).*");
+        
+        // Direct DB query is suitable if:
+        // 1. Matches simple query patterns
+        // 2. Does NOT require explanation
+        // 3. Does NOT request blueprint/overview
+        // 4. Query intent is FOCUSED (not comprehensive)
+        boolean suitable = isSimpleQuery 
+            && !requiresExplanation 
+            && !isBlueprintQuery
+            && queryIntent != null 
+            && queryIntent.getMode() == QueryIntentAnalyzer.QueryIntent.Mode.FOCUSED;
+        
+        log.info("Direct DB Query Check: isSimpleQuery={}, requiresExplanation={}, isBlueprintQuery={}, mode={}, suitable={}", 
+            isSimpleQuery, requiresExplanation, isBlueprintQuery, 
+            queryIntent != null ? queryIntent.getMode() : "null", suitable);
+        
+        return suitable;
+    }
+    
+    /**
+     * Executes direct database query for simple, structured queries
+     * Returns JSON-formatted response without LLM synthesis
+     */
+    private String executeDirectDatabaseQuery(String query, String domain, 
+            List<String> projectNames, List<UUID> projectIds, 
+            Consumer<String> progressConsumer) {
+        
+        String q = query.toLowerCase().trim();
+        List<Map<String, Object>> results = new ArrayList<>();
+        String resultType = "unknown";
+        
+        try {
+            // Pattern 1: Transaction field queries
+            java.util.regex.Pattern transactionFieldPattern = java.util.regex.Pattern.compile(
+                ".*\\btransaction\\s+(\\w+)", java.util.regex.Pattern.CASE_INSENSITIVE);
+            java.util.regex.Matcher transactionMatcher = transactionFieldPattern.matcher(query);
+            if (transactionMatcher.find() && (q.contains("field") || q.contains("symbol"))) {
+                String transactionName = transactionMatcher.group(1);
+                results = queryTransactionFields(transactionName, projectNames, projectIds);
+                resultType = "transaction_fields";
+                if (progressConsumer != null) {
+                    progressConsumer.accept("✅ Found " + results.size() + " fields for Transaction " + transactionName);
+                }
+            }
+            // Pattern 2: List all ExternalDatalists
+            else if (q.matches(".*\\b(all|list|show)\\s+(all\\s+)?externaldatalists?.*")) {
+                results = queryAllExternalDatalists(projectNames, projectIds);
+                resultType = "external_datalists";
+                if (progressConsumer != null) {
+                    progressConsumer.accept("✅ Found " + results.size() + " ExternalDatalists");
+                }
+            }
+            // Pattern 3: List all Transactions
+            else if (q.matches(".*\\b(all|list|show)\\s+(all\\s+)?transactions?.*")) {
+                results = queryAllTransactions(projectNames, projectIds);
+                resultType = "transactions";
+                if (progressConsumer != null) {
+                    progressConsumer.accept("✅ Found " + results.size() + " Transactions");
+                }
+            }
+            // Pattern 4: List all Datafields
+            else if (q.matches(".*\\b(all|list|show)\\s+(all\\s+)?datafields?.*")) {
+                results = queryAllDatafields(projectNames, projectIds);
+                resultType = "datafields";
+                if (progressConsumer != null) {
+                    progressConsumer.accept("✅ Found " + results.size() + " Datafields");
+                }
+            }
+            // Pattern 5: Entity lookup by name
+            else {
+                java.util.regex.Pattern entityPattern = java.util.regex.Pattern.compile(
+                    "\\b(externaldatalist|transaction|datafield|calculation|formblock|formreport)\\s+(\\w+)", 
+                    java.util.regex.Pattern.CASE_INSENSITIVE);
+                java.util.regex.Matcher entityMatcher = entityPattern.matcher(query);
+                if (entityMatcher.find()) {
+                    String entityType = entityMatcher.group(1).toLowerCase();
+                    String entityName = entityMatcher.group(2);
+                    results = queryEntityByName(entityType, entityName, projectNames, projectIds);
+                    resultType = "entity_lookup";
+                    if (progressConsumer != null) {
+                        progressConsumer.accept("✅ Found " + results.size() + " results for " + entityType + " " + entityName);
+                    }
+                }
+            }
+            
+            // Format as JSON response
+            Map<String, Object> response = new HashMap<>();
+            response.put("query", query);
+            response.put("resultType", resultType);
+            response.put("count", results.size());
+            response.put("results", results);
+            response.put("note", "This query was answered by direct database access (no LLM synthesis)");
+            
+            ObjectMapper mapper = new ObjectMapper();
+            return mapper.writerWithDefaultPrettyPrinter().writeValueAsString(response);
+            
+        } catch (Exception e) {
+            log.error("Error executing direct database query: {}", e.getMessage(), e);
+            return "{\"error\": \"Failed to execute direct database query: " + e.getMessage() + "\"}";
+        }
+    }
+    
+    /**
+     * Query all fields related to a specific transaction
+     */
+    private List<Map<String, Object>> queryTransactionFields(String transactionName, 
+            List<String> projectNames, List<UUID> projectIds) {
+        
+        // Find transaction symbols
+        List<Symbol> transactions = symbolRepository.findAll().stream()
+            .filter(s -> s.getCategory() != null && s.getCategory().equals("ACLF_TRANSACTION") 
+                && s.getName() != null && s.getName().equalsIgnoreCase(transactionName))
+            .collect(Collectors.toList());
+        
+        // Filter by project if specified
+        if (!projectIds.isEmpty()) {
+            transactions = transactions.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectIds.contains(s.getSourceFile().getProject().getId()))
+                .collect(Collectors.toList());
+        } else if (!projectNames.isEmpty()) {
+            transactions = transactions.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectNames.contains(s.getSourceFile().getProject().getName()))
+                .collect(Collectors.toList());
+        }
+        
+        if (transactions.isEmpty()) {
+            return Collections.emptyList();
+        }
+        
+        // Get file IDs for transactions
+        Set<UUID> fileIds = transactions.stream()
+            .filter(s -> s.getSourceFile() != null)
+            .map(s -> s.getSourceFile().getId())
+            .collect(Collectors.toSet());
+        
+        // Find all fields from same files
+        List<Symbol> fields = symbolRepository.findAll().stream()
+            .filter(s -> s.getSourceFile() != null 
+                && fileIds.contains(s.getSourceFile().getId())
+                && s.getCategory() != null
+                && (s.getCategory().equals("ACLF_FIELD_REFERENCE") 
+                    || s.getCategory().equals("ACLF_DATAFIELD_REFERENCE")
+                    || s.getCategory().equals("ACLF_DATAFIELD")))
+            .collect(Collectors.toList());
+        
+        return fields.stream().map(s -> {
+            Map<String, Object> field = new HashMap<>();
+            field.put("name", s.getName());
+            field.put("category", s.getCategory());
+            if (s.getSourceFile() != null) {
+                field.put("file", s.getSourceFile().getFileName());
+                if (s.getSourceFile().getProject() != null) {
+                    field.put("project", s.getSourceFile().getProject().getName());
+                }
+            }
+            return field;
+        }).collect(Collectors.toList());
+    }
+    
+    /**
+     * Query all ExternalDatalist symbols
+     */
+    private List<Map<String, Object>> queryAllExternalDatalists(List<String> projectNames, List<UUID> projectIds) {
+        List<Symbol> datalists = symbolRepository.findAll().stream()
+            .filter(s -> s.getCategory() != null && s.getCategory().equals("ACLF_EXTERNAL_DATALIST"))
+            .collect(Collectors.toList());
+        
+        // Filter by project if specified
+        if (!projectIds.isEmpty()) {
+            datalists = datalists.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectIds.contains(s.getSourceFile().getProject().getId()))
+                .collect(Collectors.toList());
+        } else if (!projectNames.isEmpty()) {
+            datalists = datalists.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectNames.contains(s.getSourceFile().getProject().getName()))
+                .collect(Collectors.toList());
+        }
+        
+        return datalists.stream().map(s -> {
+            Map<String, Object> datalist = new HashMap<>();
+            datalist.put("name", s.getName());
+            datalist.put("category", s.getCategory());
+            if (s.getSourceFile() != null) {
+                datalist.put("file", s.getSourceFile().getFileName());
+                if (s.getSourceFile().getProject() != null) {
+                    datalist.put("project", s.getSourceFile().getProject().getName());
+                }
+            }
+            return datalist;
+        }).collect(Collectors.toList());
+    }
+    
+    /**
+     * Query all Transaction symbols
+     */
+    private List<Map<String, Object>> queryAllTransactions(List<String> projectNames, List<UUID> projectIds) {
+        List<Symbol> transactions = symbolRepository.findAll().stream()
+            .filter(s -> s.getCategory() != null && s.getCategory().equals("ACLF_TRANSACTION"))
+            .collect(Collectors.toList());
+        
+        // Filter by project if specified
+        if (!projectIds.isEmpty()) {
+            transactions = transactions.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectIds.contains(s.getSourceFile().getProject().getId()))
+                .collect(Collectors.toList());
+        } else if (!projectNames.isEmpty()) {
+            transactions = transactions.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectNames.contains(s.getSourceFile().getProject().getName()))
+                .collect(Collectors.toList());
+        }
+        
+        return transactions.stream().map(s -> {
+            Map<String, Object> transaction = new HashMap<>();
+            transaction.put("name", s.getName());
+            transaction.put("category", s.getCategory());
+            if (s.getSourceFile() != null) {
+                transaction.put("file", s.getSourceFile().getFileName());
+                if (s.getSourceFile().getProject() != null) {
+                    transaction.put("project", s.getSourceFile().getProject().getName());
+                }
+            }
+            return transaction;
+        }).collect(Collectors.toList());
+    }
+    
+    /**
+     * Query all Datafield symbols
+     */
+    private List<Map<String, Object>> queryAllDatafields(List<String> projectNames, List<UUID> projectIds) {
+        List<Symbol> datafields = symbolRepository.findAll().stream()
+            .filter(s -> s.getCategory() != null && s.getCategory().equals("ACLF_DATAFIELD"))
+            .collect(Collectors.toList());
+        
+        // Filter by project if specified
+        if (!projectIds.isEmpty()) {
+            datafields = datafields.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectIds.contains(s.getSourceFile().getProject().getId()))
+                .collect(Collectors.toList());
+        } else if (!projectNames.isEmpty()) {
+            datafields = datafields.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectNames.contains(s.getSourceFile().getProject().getName()))
+                .collect(Collectors.toList());
+        }
+        
+        return datafields.stream().map(s -> {
+            Map<String, Object> datafield = new HashMap<>();
+            datafield.put("name", s.getName());
+            datafield.put("category", s.getCategory());
+            if (s.getSourceFile() != null) {
+                datafield.put("file", s.getSourceFile().getFileName());
+                if (s.getSourceFile().getProject() != null) {
+                    datafield.put("project", s.getSourceFile().getProject().getName());
+                }
+            }
+            return datafield;
+        }).collect(Collectors.toList());
+    }
+    
+    /**
+     * Query entity by name and type
+     */
+    private List<Map<String, Object>> queryEntityByName(String entityType, String entityName, 
+            List<String> projectNames, List<UUID> projectIds) {
+        
+        String category = null;
+        switch (entityType.toLowerCase()) {
+            case "externaldatalist":
+                category = "ACLF_EXTERNAL_DATALIST";
+                break;
+            case "transaction":
+                category = "ACLF_TRANSACTION";
+                break;
+            case "datafield":
+                category = "ACLF_DATAFIELD";
+                break;
+            case "calculation":
+                category = "ACLF_CALCULATION";
+                break;
+            case "formblock":
+                category = "ACLF_FORM_BLOCK";
+                break;
+            case "formreport":
+                category = "ACLF_FORM_REPORT";
+                break;
+        }
+        
+        if (category == null) {
+            return Collections.emptyList();
+        }
+        
+        List<Symbol> entities = symbolRepository.findAll().stream()
+            .filter(s -> s.getCategory() != null && s.getCategory().equals(category)
+                && s.getName() != null && s.getName().equalsIgnoreCase(entityName))
+            .collect(Collectors.toList());
+        
+        // Filter by project if specified
+        if (!projectIds.isEmpty()) {
+            entities = entities.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectIds.contains(s.getSourceFile().getProject().getId()))
+                .collect(Collectors.toList());
+        } else if (!projectNames.isEmpty()) {
+            entities = entities.stream()
+                .filter(s -> s.getSourceFile() != null 
+                    && s.getSourceFile().getProject() != null
+                    && projectNames.contains(s.getSourceFile().getProject().getName()))
+                .collect(Collectors.toList());
+        }
+        
+        return entities.stream().map(s -> {
+            Map<String, Object> entity = new HashMap<>();
+            entity.put("name", s.getName());
+            entity.put("category", s.getCategory());
+            if (s.getSourceFile() != null) {
+                entity.put("file", s.getSourceFile().getFileName());
+                if (s.getSourceFile().getProject() != null) {
+                    entity.put("project", s.getSourceFile().getProject().getName());
+                }
+            }
+            return entity;
+        }).collect(Collectors.toList());
     }
 }
