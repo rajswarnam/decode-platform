@@ -10,4 +10,6 @@ public interface SourceFileRepository extends JpaRepository<SourceFile, UUID> {
     Optional<SourceFile> findByProjectAndFilePath(Project project, String filePath);
 
     Optional<SourceFile> findByFilePath(String filePath);
+    
+    long countByProject(Project project);
 }
