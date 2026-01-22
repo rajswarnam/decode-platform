@@ -258,7 +258,10 @@ public class ParserController {
         AtomicInteger submittedCount = new AtomicInteger(0);
         
         log.info("🚀 [GROUP] Using thread pool with {} concurrent threads for {} projects", maxConcurrentThreads, projects.size());
+        System.out.println("========================================");
         System.out.println("Using thread pool with " + maxConcurrentThreads + " concurrent threads");
+        System.out.println("About to submit " + projects.size() + " tasks");
+        System.out.println("========================================");
         System.out.flush();
         
         // Submit all tasks to the executor
@@ -267,24 +270,32 @@ public class ParserController {
             final String finalProjectName = project.getName();
             final java.util.UUID finalProjectId = project.getId();
             
+            // Increment BEFORE submitting (tracks submission, not execution start)
+            int currentSubmitted = submittedCount.incrementAndGet();
+            
+            // Log progress every submission
+            if (currentSubmitted % 10 == 0 || currentSubmitted == 1) {
+                System.out.println("📊 [GROUP] Submitting: " + currentSubmitted + " / " + projects.size());
+                log.info("📊 [GROUP] Progress: {}/{} projects submitted to thread pool", currentSubmitted, projects.size());
+                System.out.flush();
+            }
+            
             executor.submit(() -> {
-                int currentSubmitted = submittedCount.incrementAndGet();
-                
-                // Log progress every submission
-                if (currentSubmitted % 10 == 0 || currentSubmitted == 1) {
-                    System.out.println("📊 [GROUP] Submitted: " + currentSubmitted + " / " + projects.size());
-                    log.info("📊 [GROUP] Progress: {}/{} projects submitted to thread pool", currentSubmitted, projects.size());
-                    System.out.flush();
-                }
-                
                 // IMMEDIATE LOGGING IN THREAD - BEFORE ANYTHING ELSE
                 System.out.println("========================================");
                 System.out.println("THREAD STARTED: " + Thread.currentThread().getName());
                 System.out.println("Project: " + finalProjectName);
                 System.out.println("ID: " + finalProjectId);
-                System.out.println("Progress: " + currentSubmitted + "/" + projects.size() + " submitted");
+                System.out.println("Task #: " + currentSubmitted + "/" + projects.size());
                 System.out.println("========================================");
                 System.out.flush();
+                
+                // Log when task actually starts executing
+                if (currentSubmitted % 10 == 0 || currentSubmitted == 1 || currentSubmitted <= 5) {
+                    System.out.println("📊 [GROUP] Executing: " + currentSubmitted + " / " + projects.size());
+                    log.info("📊 [GROUP] Task started executing: {}/{}", currentSubmitted, projects.size());
+                    System.out.flush();
+                }
                 
                 log.info("========================================");
                 log.info("🔄 [GROUP THREAD START] Thread started for project: {} (ID: {})", finalProjectName, finalProjectId);
@@ -357,13 +368,33 @@ public class ParserController {
         progressLogger.setDaemon(true);
         progressLogger.start();
         
-        // Shutdown executor (but don't wait for completion - return immediately)
-        executor.shutdown();
+        // Don't shutdown executor immediately - let it run
+        // We'll use a separate thread to monitor and shutdown when done
+        Thread shutdownMonitor = new Thread(() -> {
+            try {
+                // Wait for all tasks to complete
+                executor.shutdown();
+                boolean terminated = executor.awaitTermination(1, TimeUnit.HOURS);
+                if (terminated) {
+                    log.info("✅ [GROUP] All parsing tasks completed. Executor terminated.");
+                    System.out.println("✅ [GROUP] All parsing tasks completed");
+                } else {
+                    log.warn("⚠️ [GROUP] Executor did not terminate within 1 hour. Some tasks may still be running.");
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                executor.shutdownNow();
+            }
+        }, "GroupShutdownMonitor");
+        shutdownMonitor.setDaemon(true);
+        shutdownMonitor.start();
         
         System.out.println("========================================");
         System.out.println("GROUP TRIGGER: All " + projects.size() + " projects submitted to thread pool");
         System.out.println("Thread pool will process " + maxConcurrentThreads + " projects concurrently");
         System.out.println("Check logs for progress updates every 5 seconds");
+        System.out.println("Submitted count: " + submittedCount.get());
         System.out.println("========================================");
         System.out.flush();
         
