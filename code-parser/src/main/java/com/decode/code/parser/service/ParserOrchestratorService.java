@@ -191,7 +191,10 @@ public class ParserOrchestratorService {
 
     private boolean processProjectFromMinio(Project project) throws Exception {
         String projectPrefix = project.getId().toString();
-        log.info("Scanning MinIO Bucket '{}' for Project: {} (Prefix: {})", bucketName, project.getName(), projectPrefix);
+        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log.info("📦 [MINIO SCAN] Scanning MinIO Bucket '{}' for Project: {} (Prefix: {})", 
+            bucketName, project.getName(), projectPrefix);
+        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
         Iterable<Result<Item>> results = minioClient.listObjects(
                 ListObjectsArgs.builder()
