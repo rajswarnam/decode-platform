@@ -51,18 +51,36 @@ public class ParserOrchestratorService {
     private String vectorizerUrl;
 
     public void processProject(Project project) {
+        log.info("═══════════════════════════════════════════════════════════");
+        log.info("🚀 [PARSER SERVICE] Starting processProject for: {} (ID: {})", project.getName(), project.getId());
+        log.info("═══════════════════════════════════════════════════════════");
+        
         try {
-            log.info("triggering parsing for project: {}", project.getName());
+            log.info("📋 [PARSER SERVICE] Project details - Name: {}, BasePath: {}, TechStack: {}", 
+                project.getName(), project.getBasePath(), project.getTechStack());
+            
             boolean symbolsFound = processProjectFromMinio(project);
+            
+            log.info("📊 [PARSER SERVICE] Parsing result for {}: symbolsFound = {}", project.getName(), symbolsFound);
             
             // CHAIN: Trigger Vectorizer only if symbols were actually parsed
             if (symbolsFound) {
+                log.info("🔗 [PARSER SERVICE] Symbols found for {}. Triggering vectorizer...", project.getName());
                 triggerVectorizer(project);
             } else {
-                log.info("No symbols found for project: {}. Skipping vectorizer trigger.", project.getName());
+                log.warn("⚠️ [PARSER SERVICE] No symbols found for project: {}. Skipping vectorizer trigger.", project.getName());
             }
+            
+            log.info("✅ [PARSER SERVICE] Completed processProject for: {}", project.getName());
         } catch (Exception e) {
-            log.error("Parsing failed for project {}", project.getName(), e);
+            log.error("❌ [PARSER SERVICE] Parsing failed for project {} (ID: {}): {}", 
+                project.getName(), project.getId(), e.getMessage(), e);
+            log.error("❌ [PARSER SERVICE] Exception class: {}, Stack trace:", e.getClass().getName(), e);
+            throw e; // Re-throw to let caller handle it
+        } finally {
+            log.info("═══════════════════════════════════════════════════════════");
+            log.info("🏁 [PARSER SERVICE] Finished processProject for: {}", project.getName());
+            log.info("═══════════════════════════════════════════════════════════");
         }
     }
 

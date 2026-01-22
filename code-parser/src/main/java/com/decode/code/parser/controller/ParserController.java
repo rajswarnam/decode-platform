@@ -51,17 +51,29 @@ public class ParserController {
         long symbolCountBefore = symbolRepository.countBySourceFile_Project_Id(projectId);
         
         // Async execution to avoid blocking the HTTP request
-        new Thread(() -> {
+        Thread parsingThread = new Thread(() -> {
             try {
-                log.info("🔄 Starting parsing thread for project: {}", project.getName());
+                log.info("🔄 [THREAD START] Starting parsing thread for project: {} (ID: {})", project.getName(), projectId);
+                log.info("🔄 [THREAD] Thread ID: {}, Thread Name: {}", Thread.currentThread().getId(), Thread.currentThread().getName());
+                
                 parserService.processProject(project);
+                
                 long symbolCountAfter = symbolRepository.countBySourceFile_Project_Id(projectId);
-                log.info("✅ Parsing completed for project: {}. Symbols: {} → {}", 
+                log.info("✅ [THREAD COMPLETE] Parsing completed for project: {}. Symbols: {} → {}", 
                     project.getName(), symbolCountBefore, symbolCountAfter);
             } catch (Exception e) {
-                log.error("❌ Error during parsing for project {}: {}", project.getName(), e.getMessage(), e);
+                log.error("❌ [THREAD ERROR] Error during parsing for project {} (ID: {}): {}", 
+                    project.getName(), projectId, e.getMessage(), e);
+                log.error("❌ [THREAD ERROR] Stack trace:", e);
+            } catch (Throwable t) {
+                log.error("❌ [THREAD FATAL] Fatal error during parsing for project {} (ID: {}): {}", 
+                    project.getName(), projectId, t.getMessage(), t);
             }
-        }).start();
+        }, "ParserThread-" + project.getName() + "-" + projectId);
+        
+        parsingThread.setDaemon(false); // Don't let thread die if main thread exits
+        parsingThread.start();
+        log.info("🚀 [THREAD LAUNCHED] Started parsing thread for project: {} (Thread: {})", project.getName(), parsingThread.getName());
         
         Map<String, Object> response = new HashMap<>();
         response.put("message", "Parsing triggered for " + project.getName());
