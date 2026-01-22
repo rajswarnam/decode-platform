@@ -2299,40 +2299,46 @@ public class AgentOrchestrator {
     }
     
     /**
+     * Helper method to determine category from entity type
+     */
+    private String determineCategory(String entityType) {
+        switch (entityType.toLowerCase()) {
+            case "externaldatalist":
+                return "ACLF_EXTERNAL_DATALIST";
+            case "transaction":
+                return "ACLF_TRANSACTION";
+            case "datafield":
+                return "ACLF_DATAFIELD";
+            case "calculation":
+                return "ACLF_CALCULATION";
+            case "formblock":
+                return "ACLF_FORM_BLOCK";
+            case "formreport":
+                return "ACLF_FORM_REPORT";
+            default:
+                return null;
+        }
+    }
+    
+    /**
      * Query entity by name and type
      */
     private List<Map<String, Object>> queryEntityByName(String entityType, String entityName, 
             List<String> projectNames, List<UUID> projectIds) {
         
-        String category = null;
-        switch (entityType.toLowerCase()) {
-            case "externaldatalist":
-                category = "ACLF_EXTERNAL_DATALIST";
-                break;
-            case "transaction":
-                category = "ACLF_TRANSACTION";
-                break;
-            case "datafield":
-                category = "ACLF_DATAFIELD";
-                break;
-            case "calculation":
-                category = "ACLF_CALCULATION";
-                break;
-            case "formblock":
-                category = "ACLF_FORM_BLOCK";
-                break;
-            case "formreport":
-                category = "ACLF_FORM_REPORT";
-                break;
-        }
+        // Determine category - extract to method to make it effectively final
+        String category = determineCategory(entityType);
         
         if (category == null) {
             return Collections.emptyList();
         }
         
+        // Create final copy for lambda
+        final String finalCategory = category;
+        final String finalEntityName = entityName;
         List<Symbol> entities = symbolRepository.findAll().stream()
-            .filter(s -> s.getCategory() != null && s.getCategory().equals(category)
-                && s.getName() != null && s.getName().equalsIgnoreCase(entityName))
+            .filter(s -> s.getCategory() != null && s.getCategory().equals(finalCategory)
+                && s.getName() != null && s.getName().equalsIgnoreCase(finalEntityName))
             .collect(Collectors.toList());
         
         // Filter by project if specified
