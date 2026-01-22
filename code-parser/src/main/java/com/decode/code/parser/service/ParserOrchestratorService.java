@@ -76,7 +76,13 @@ public class ParserOrchestratorService {
             log.error("❌ [PARSER SERVICE] Parsing failed for project {} (ID: {}): {}", 
                 project.getName(), project.getId(), e.getMessage(), e);
             log.error("❌ [PARSER SERVICE] Exception class: {}, Stack trace:", e.getClass().getName(), e);
-            throw e; // Re-throw to let caller handle it
+            // Don't re-throw - error is logged and caller (thread) will handle it
+            // If it's a RuntimeException, it will propagate naturally
+            if (e instanceof RuntimeException) {
+                throw (RuntimeException) e;
+            }
+            // For checked exceptions, wrap in RuntimeException since method doesn't declare throws
+            throw new RuntimeException("Parsing failed for project: " + project.getName(), e);
         } finally {
             log.info("═══════════════════════════════════════════════════════════");
             log.info("🏁 [PARSER SERVICE] Finished processProject for: {}", project.getName());
