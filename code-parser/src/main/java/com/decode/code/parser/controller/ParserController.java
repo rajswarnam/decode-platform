@@ -371,10 +371,10 @@ public class ParserController {
             projects.size(), submittedCount.get(), maxConcurrentThreads);
         
         Map<String, Object> response = new HashMap<>();
-        response.put("message", "Parsing triggered for " + triggeredCount + " projects in group: " + groupName);
+        response.put("message", "Parsing triggered for " + submittedCount.get() + " projects in group: " + groupName);
         response.put("groupName", groupName);
         response.put("projectsFound", projects.size());
-        response.put("projectsTriggered", triggeredCount);
+        response.put("projectsTriggered", submittedCount.get());
         response.put("projectNames", projects.stream().map(Project::getName).collect(java.util.stream.Collectors.toList()));
         
         return ResponseEntity.ok(response);
