@@ -264,6 +264,24 @@ public class ParserController {
         System.out.println("========================================");
         System.out.flush();
         
+        // Test the executor with a simple task first
+        System.out.println("🧪 [GROUP] Testing executor with a test task...");
+        System.out.flush();
+        try {
+            executor.submit(() -> {
+                System.out.println("✅ [GROUP] Executor test task executed successfully!");
+                log.info("✅ [GROUP] Executor is working - test task executed");
+                System.out.flush();
+            }).get(5, TimeUnit.SECONDS); // Wait up to 5 seconds for test task
+            System.out.println("✅ [GROUP] Executor test passed - ready to submit real tasks");
+            System.out.flush();
+        } catch (Exception e) {
+            System.err.println("❌ [GROUP] Executor test failed: " + e.getMessage());
+            e.printStackTrace();
+            System.err.flush();
+            log.error("❌ [GROUP] Executor test failed: {}", e.getMessage(), e);
+        }
+        
         // Submit all tasks to the executor
         for (Project project : projects) {
             final Project finalProject = project;
@@ -274,13 +292,14 @@ public class ParserController {
             int currentSubmitted = submittedCount.incrementAndGet();
             
             // Log progress every submission
-            if (currentSubmitted % 10 == 0 || currentSubmitted == 1) {
+            if (currentSubmitted % 10 == 0 || currentSubmitted == 1 || currentSubmitted <= 5) {
                 System.out.println("📊 [GROUP] Submitting: " + currentSubmitted + " / " + projects.size());
                 log.info("📊 [GROUP] Progress: {}/{} projects submitted to thread pool", currentSubmitted, projects.size());
                 System.out.flush();
             }
             
-            executor.submit(() -> {
+            try {
+                executor.submit(() -> {
                 // IMMEDIATE LOGGING IN THREAD - BEFORE ANYTHING ELSE
                 System.out.println("========================================");
                 System.out.println("THREAD STARTED: " + Thread.currentThread().getName());
@@ -345,8 +364,29 @@ public class ParserController {
                     log.info("🏁 [GROUP THREAD] Thread finishing for project: {} ({}/{})", finalProjectName, completed, projects.size());
                     System.out.flush();
                 }
-            });
+                });
+                
+                // Log successful submission for first few tasks
+                if (currentSubmitted <= 5) {
+                    System.out.println("✅ [GROUP] Successfully submitted task #" + currentSubmitted + " for: " + finalProjectName);
+                    log.info("✅ [GROUP] Successfully submitted task #{} for: {}", currentSubmitted, finalProjectName);
+                    System.out.flush();
+                }
+            } catch (Exception e) {
+                System.err.println("❌ [GROUP] Failed to submit task for " + finalProjectName + ": " + e.getMessage());
+                e.printStackTrace();
+                System.err.flush();
+                log.error("❌ [GROUP] Failed to submit task for {}: {}", finalProjectName, e.getMessage(), e);
+                errorCount.incrementAndGet();
+            }
         }
+        
+        System.out.println("========================================");
+        System.out.println("✅ [GROUP] Finished submitting all " + submittedCount.get() + " tasks to executor");
+        System.out.println("Executor should now start processing tasks...");
+        System.out.println("========================================");
+        System.out.flush();
+        log.info("✅ [GROUP] Finished submitting all {} tasks to executor", submittedCount.get());
         
         // Start a background thread to log progress periodically
         Thread progressLogger = new Thread(() -> {
@@ -401,12 +441,30 @@ public class ParserController {
         log.info("📊 [GROUP] Summary - Total: {}, Submitted: {}, Thread Pool Size: {}", 
             projects.size(), submittedCount.get(), maxConcurrentThreads);
         
+        // Give executor a moment to start processing first few tasks
+        // This ensures we can see initial logs before returning response
+        try {
+            Thread.sleep(1000); // 1 second delay
+            System.out.println("⏳ [GROUP] Waiting 1 second for initial tasks to start...");
+            System.out.flush();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        
+        // Check if any tasks have started
+        int started = completedCount.get() + errorCount.get();
+        System.out.println("📊 [GROUP] After 1 second: " + started + " tasks have started/completed");
+        System.out.flush();
+        
         Map<String, Object> response = new HashMap<>();
         response.put("message", "Parsing triggered for " + submittedCount.get() + " projects in group: " + groupName);
         response.put("groupName", groupName);
         response.put("projectsFound", projects.size());
         response.put("projectsTriggered", submittedCount.get());
-        response.put("projectNames", projects.stream().map(Project::getName).collect(java.util.stream.Collectors.toList()));
+        response.put("tasksStarted", started);
+        response.put("threadPoolSize", maxConcurrentThreads);
+        response.put("projectNames", projects.stream().map(Project::getName).limit(10).collect(java.util.stream.Collectors.toList()));
+        response.put("note", "Check logs for progress. Tasks are running asynchronously.");
         
         return ResponseEntity.ok(response);
     }
