@@ -260,11 +260,17 @@ public class ParserController {
                 
                 Thread projectThread = new Thread(() -> {
                     // IMMEDIATE LOGGING IN THREAD - BEFORE ANYTHING ELSE
+                    // Use both System.out and System.err to ensure visibility
                     System.out.println("========================================");
                     System.out.println("THREAD STARTED: " + Thread.currentThread().getName());
                     System.out.println("Project: " + finalProjectName);
                     System.out.println("ID: " + finalProjectId);
                     System.out.println("========================================");
+                    System.out.flush(); // Force immediate output
+                    
+                    // Also write to stderr for visibility
+                    System.err.println("[THREAD] " + Thread.currentThread().getName() + " - " + finalProjectName);
+                    System.err.flush();
                     
                     log.info("========================================");
                     log.info("🔄 [GROUP THREAD START] Thread started for project: {} (ID: {})", finalProjectName, finalProjectId);
@@ -311,9 +317,14 @@ public class ParserController {
                 
                 projectThread.start();
                 
+                // Force flush logs immediately
+                System.out.flush();
+                System.err.flush();
+                
                 log.info("🚀 [GROUP THREAD LAUNCHED] Started parsing thread for project: {} (Thread: {}, State: {}, Alive: {})", 
                     project.getName(), projectThread.getName(), projectThread.getState(), projectThread.isAlive());
                 System.out.println("Thread started: " + projectThread.getName() + ", State: " + projectThread.getState());
+                System.out.flush(); // Force immediate output
                 
                 triggeredCount++;
                 
