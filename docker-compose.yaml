@@ -65,6 +65,8 @@ services:
     platform: linux/amd64
     build: ./code-parser
     extra_hosts: [ "host.docker.internal:host-gateway" ]
+    ports:
+      - "8086:8080"  # Expose code-parser on port 8086
     depends_on:
       postgres:
         condition: service_healthy
