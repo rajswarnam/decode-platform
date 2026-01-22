@@ -243,12 +243,15 @@ public class AclfParserService implements LanguageParser {
         
         // Pattern 1: ExternalDatalist definitions
         // Example: ExternalDatalist A2AIMGO { ... }
+        // More flexible: allow optional whitespace and different brace styles
         java.util.regex.Pattern datalistPattern = java.util.regex.Pattern.compile(
             "ExternalDatalist\\s+(\\w+)\\s*\\{", 
             java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
         );
         java.util.regex.Matcher datalistMatcher = datalistPattern.matcher(content);
+        int datalistMatchCount = 0;
         while (datalistMatcher.find()) {
+            datalistMatchCount++;
             String datalistName = datalistMatcher.group(1);
             ParsedSymbol ps = new ParsedSymbol();
             ps.setName(datalistName);
@@ -261,28 +264,60 @@ public class AclfParserService implements LanguageParser {
             tags.add(ps);
             log.debug("Found ExternalDatalist: {}", datalistName);
         }
+        if (datalistMatchCount == 0) {
+            log.debug("No ExternalDatalist definitions found in {} (searched for pattern: ExternalDatalist <name> {{)", file.getName());
+        }
         
         // Pattern 2: Datafield definitions
         // Example: Datafield _ABANUM { Type = DataType.Numeric; Length = 9; }
+        // More flexible: matches Datafield with or without Type/Length in same block
         java.util.regex.Pattern datafieldPattern = java.util.regex.Pattern.compile(
-            "Datafield\\s+(\\w+)\\s*\\{[^}]*Type\\s*=\\s*([^;]+);[^}]*Length\\s*=\\s*(\\d+)", 
-            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL
+            "Datafield\\s+(\\w+)\\s*\\{", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
         );
         java.util.regex.Matcher datafieldMatcher = datafieldPattern.matcher(content);
         while (datafieldMatcher.find()) {
             String fieldName = datafieldMatcher.group(1);
-            String fieldType = datafieldMatcher.group(2).trim();
-            String fieldLength = datafieldMatcher.group(3);
+            
+            // Find the matching closing brace to extract the full block
+            int fieldStart = datafieldMatcher.end();
+            int fieldEnd = findMatchingBrace(content, fieldStart);
+            String fieldBlock = fieldEnd > fieldStart ? content.substring(fieldStart, fieldEnd) : "";
+            
+            // Extract Type and Length from the block if present
+            String fieldType = "Unknown";
+            String fieldLength = "Unknown";
+            
+            java.util.regex.Pattern typePattern = java.util.regex.Pattern.compile(
+                "Type\\s*=\\s*([^;\\n]+)", 
+                java.util.regex.Pattern.CASE_INSENSITIVE
+            );
+            java.util.regex.Matcher typeMatcher = typePattern.matcher(fieldBlock);
+            if (typeMatcher.find()) {
+                fieldType = typeMatcher.group(1).trim();
+            }
+            
+            java.util.regex.Pattern lengthPattern = java.util.regex.Pattern.compile(
+                "Length\\s*=\\s*(\\d+)", 
+                java.util.regex.Pattern.CASE_INSENSITIVE
+            );
+            java.util.regex.Matcher lengthMatcher = lengthPattern.matcher(fieldBlock);
+            if (lengthMatcher.find()) {
+                fieldLength = lengthMatcher.group(1);
+            }
             
             ParsedSymbol ps = new ParsedSymbol();
             ps.setName(fieldName);
             ps.setCategory("ACLF_DATAFIELD");
-            ps.setType(fieldType + " (Length: " + fieldLength + ")");
+            ps.setType(fieldType + (fieldLength.equals("Unknown") ? "" : " (Length: " + fieldLength + ")"));
             int lineNumber = content.substring(0, datafieldMatcher.start()).split("\n").length;
             ps.setStartLine(lineNumber);
             ps.setEndLine(lineNumber);
             tags.add(ps);
             log.debug("Found Datafield: {} (Type: {}, Length: {})", fieldName, fieldType, fieldLength);
+        }
+        if (tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD")).count() == 0) {
+            log.debug("No Datafield definitions found in {} (searched for pattern: Datafield <name> {{)", file.getName());
         }
         
         // Pattern 3: Transaction definitions
@@ -725,15 +760,51 @@ public class AclfParserService implements LanguageParser {
             Return ONLY valid JSON array, no other text.
             """, contentSample);
         
+        String response = null;
         try {
-            String response = chatClientBuilder.build()
+            response = chatClientBuilder.build()
                     .prompt(prompt)
                     .call()
                     .content();
             
+            // Validate response before parsing
+            if (response == null || response.trim().isEmpty()) {
+                log.warn("LLM returned empty response for {}", file.getName());
+                return llmFields;
+            }
+            
+            // Check if response looks like an error message
+            String trimmedResponse = response.trim();
+            if (trimmedResponse.startsWith("Error") || 
+                trimmedResponse.startsWith("error") ||
+                trimmedResponse.startsWith("ERROR") ||
+                trimmedResponse.toLowerCase().contains("i cannot") ||
+                trimmedResponse.toLowerCase().contains("i'm sorry") ||
+                trimmedResponse.toLowerCase().contains("unable to")) {
+                log.warn("LLM returned error response for {}: {}", file.getName(), 
+                        trimmedResponse.length() > 200 ? trimmedResponse.substring(0, 200) + "..." : trimmedResponse);
+                return llmFields;
+            }
+            
+            // Try to extract JSON from response if it's wrapped in markdown code blocks
+            String jsonContent = trimmedResponse;
+            if (trimmedResponse.startsWith("```json")) {
+                int startIdx = trimmedResponse.indexOf("```json") + 7;
+                int endIdx = trimmedResponse.indexOf("```", startIdx);
+                if (endIdx > startIdx) {
+                    jsonContent = trimmedResponse.substring(startIdx, endIdx).trim();
+                }
+            } else if (trimmedResponse.startsWith("```")) {
+                int startIdx = trimmedResponse.indexOf("```") + 3;
+                int endIdx = trimmedResponse.indexOf("```", startIdx);
+                if (endIdx > startIdx) {
+                    jsonContent = trimmedResponse.substring(startIdx, endIdx).trim();
+                }
+            }
+            
             // Parse LLM response (JSON array)
             com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            com.fasterxml.jackson.databind.JsonNode jsonArray = mapper.readTree(response);
+            com.fasterxml.jackson.databind.JsonNode jsonArray = mapper.readTree(jsonContent);
             
             if (jsonArray.isArray()) {
                 for (com.fasterxml.jackson.databind.JsonNode fieldNode : jsonArray) {
@@ -761,9 +832,13 @@ public class AclfParserService implements LanguageParser {
                 }
             }
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            log.warn("Failed to parse LLM response as JSON for {}: {}", file.getName(), e.getMessage());
+            log.warn("Failed to parse LLM response as JSON for {}: {}. Raw response (first 500 chars): {}", 
+                    file.getName(), e.getMessage(), 
+                    response != null && response.length() > 500 ? response.substring(0, 500) + "..." : response);
         } catch (Exception e) {
-            log.warn("LLM field extraction failed for {}: {}", file.getName(), e.getMessage());
+            log.warn("LLM field extraction failed for {}: {}. Raw response (first 500 chars): {}", 
+                    file.getName(), e.getMessage(),
+                    response != null && response.length() > 500 ? response.substring(0, 500) + "..." : response);
         }
         
         return llmFields;
