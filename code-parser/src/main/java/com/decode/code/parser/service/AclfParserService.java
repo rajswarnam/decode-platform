@@ -616,14 +616,15 @@ public class AclfParserService implements LanguageParser {
         long datalistCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_EXTERNAL_DATALIST")).count();
         long datafieldCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD")).count();
         long transactionCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_TRANSACTION")).count();
+        long transactionRefCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_TRANSACTION_REFERENCE")).count();
         long formBlockCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FORM_BLOCK")).count();
         long formReportCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FORM_REPORT")).count();
         long calculationCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_CALCULATION")).count();
         long fieldReferenceCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_FIELD_REFERENCE")).count();
         long datafieldReferenceCount = tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD_REFERENCE")).count();
         
-        log.info("DSL parsing complete (regex patterns) for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} FormBlocks, {} FormReports, {} Calculations, {} FieldReferences, {} DatafieldReferences", 
-                file.getName(), tags.size(), datalistCount, datafieldCount, transactionCount, formBlockCount, formReportCount, calculationCount, fieldReferenceCount, datafieldReferenceCount);
+        log.info("DSL parsing complete (regex patterns) for {}. Found {} symbols: {} ExternalDatalists, {} Datafields, {} Transactions, {} TransactionReferences, {} FormBlocks, {} FormReports, {} Calculations, {} FieldReferences, {} DatafieldReferences", 
+                file.getName(), tags.size(), datalistCount, datafieldCount, transactionCount, transactionRefCount, formBlockCount, formReportCount, calculationCount, fieldReferenceCount, datafieldReferenceCount);
         
         // HYBRID APPROACH: Use LLM to extract additional field references from unknown patterns
         // This catches patterns that regex might miss (nested structures, complex expressions, etc.)
