@@ -40,7 +40,13 @@ public class AclfParserService implements LanguageParser {
 
     @Override
     public boolean supports(File file) {
-        return file.getName().endsWith(".aclf");
+        String fileName = file.getName().toLowerCase();
+        boolean supports = fileName.endsWith(".aclf");
+        if (!supports && fileName.contains("aclf")) {
+            // Log if file name contains "aclf" but doesn't end with .aclf
+            log.debug("File {} contains 'aclf' but doesn't end with .aclf", file.getName());
+        }
+        return supports;
     }
 
     @Override

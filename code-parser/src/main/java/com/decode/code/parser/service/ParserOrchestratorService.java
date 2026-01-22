@@ -278,28 +278,57 @@ public class ParserOrchestratorService {
                 return false;
             }
 
+            // Log which parsers are available
+            if (totalFiles <= 10 || (totalFiles % 100 == 0)) {
+                log.info("🔍 [PARSER CHECK] Checking file: {} (extension: {})", objectKey, extension);
+                log.info("🔍 [PARSER CHECK] Available parsers: {}", parsers.stream()
+                    .map(p -> p.getClass().getSimpleName())
+                    .collect(java.util.stream.Collectors.joining(", ")));
+            }
+            
             for (LanguageParser parser : parsers) {
-                if (parser.supports(tempFile)) {
+                boolean supports = parser.supports(tempFile);
+                if (totalFiles <= 10 || (totalFiles % 100 == 0)) {
+                    log.info("🔍 [PARSER CHECK] Parser {} supports {}: {}", 
+                        parser.getClass().getSimpleName(), objectKey, supports);
+                }
+                
+                if (supports) {
                     try {
+                        log.info("✅ [PARSER MATCH] Using parser {} for file: {}", parser.getClass().getSimpleName(), objectKey);
                         List<ParsedSymbol> symbols = parser.parseFile(tempFile);
                         List<ParsedRelationship> relationships = parser.extractRelationships(tempFile, symbols);
+                        
+                        if (symbols.isEmpty()) {
+                            log.warn("⚠️ [PARSER RESULT] Parser {} found 0 symbols for file: {}", 
+                                parser.getClass().getSimpleName(), objectKey);
+                        } else {
+                            log.info("✅ [PARSER RESULT] Parser {} found {} symbols for file: {}", 
+                                parser.getClass().getSimpleName(), symbols.size(), objectKey);
+                        }
+                        
                         saveResults(project, objectKey, tempFile.getName(), symbols, relationships);
                         return !symbols.isEmpty();
                     } catch (Exception e) {
-                        log.error("Parser {} failed for file {}: {}", parser.getClass().getSimpleName(), objectKey, e.getMessage());
+                        log.error("❌ [PARSER ERROR] Parser {} failed for file {}: {}", 
+                            parser.getClass().getSimpleName(), objectKey, e.getMessage(), e);
                         // Continue to next parser or return false - don't crash entire parsing
                         return false;
                     }
                 }
             }
             
-            // No parser matched - log for debugging
-            String extension = "";
+            // No parser matched - log for debugging (change to WARN for visibility)
+            String extensionForLog = "";
             int dotIndex = objectKey.lastIndexOf('.');
             if (dotIndex > 0 && dotIndex < objectKey.length() - 1) {
-                extension = objectKey.substring(dotIndex);
+                extensionForLog = objectKey.substring(dotIndex);
             }
-            log.debug("No parser found for file: {} (extension: {})", objectKey, extension.isEmpty() ? "none" : extension);
+            log.warn("⚠️ [NO PARSER] No parser found for file: {} (extension: {})", 
+                objectKey, extensionForLog.isEmpty() ? "none" : extensionForLog);
+            log.warn("⚠️ [NO PARSER] Available parsers: {}", parsers.stream()
+                .map(p -> p.getClass().getSimpleName())
+                .collect(java.util.stream.Collectors.joining(", ")));
             return false;
         } catch (Exception e) {
             log.error("Failed to process object: {}", objectKey, e);
