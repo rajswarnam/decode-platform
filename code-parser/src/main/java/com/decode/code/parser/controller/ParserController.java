@@ -193,18 +193,29 @@ public class ParserController {
         int triggeredCount = 0;
         for (Project project : projects) {
             try {
-                new Thread(() -> {
+                Thread projectThread = new Thread(() -> {
                     try {
-                        log.info("🔄 Starting parsing for project: {} (ID: {})", project.getName(), project.getId());
+                        log.info("🔄 [GROUP THREAD START] Starting parsing for project: {} (ID: {})", project.getName(), project.getId());
                         parserService.processProject(project);
-                        log.info("✅ Completed parsing for project: {}", project.getName());
+                        log.info("✅ [GROUP THREAD COMPLETE] Successfully completed parsing for project: {}", project.getName());
                     } catch (Exception e) {
-                        log.error("❌ Error during parsing for project {}: {}", project.getName(), e.getMessage(), e);
+                        log.error("❌ [GROUP THREAD ERROR] Error during parsing for project {} (ID: {}): {}", 
+                            project.getName(), project.getId(), e.getMessage(), e);
+                        log.error("❌ [GROUP THREAD ERROR] Stack trace:", e);
+                    } catch (Throwable t) {
+                        log.error("❌ [GROUP THREAD FATAL] Fatal error during parsing for project {} (ID: {}): {}", 
+                            project.getName(), project.getId(), t.getMessage(), t);
                     }
-                }).start();
+                }, "GroupParserThread-" + project.getName() + "-" + project.getId());
+                
+                projectThread.setDaemon(false);
+                projectThread.start();
+                log.info("🚀 [GROUP THREAD LAUNCHED] Started parsing thread for project: {} (Thread: {})", 
+                    project.getName(), projectThread.getName());
                 triggeredCount++;
             } catch (Exception e) {
-                log.error("❌ Failed to trigger parsing for project {}: {}", project.getName(), e.getMessage());
+                log.error("❌ [GROUP THREAD CREATE ERROR] Failed to create/start thread for project {}: {}", 
+                    project.getName(), e.getMessage(), e);
             }
         }
         
