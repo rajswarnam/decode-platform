@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -257,6 +258,9 @@ public class ParserController {
         AtomicInteger errorCount = new AtomicInteger(0);
         AtomicInteger submittedCount = new AtomicInteger(0);
         
+        // Track active threads for visibility
+        Map<String, Long> activeThreads = new java.util.concurrent.ConcurrentHashMap<>();
+        
         log.info("🚀 [GROUP] Using thread pool with {} concurrent threads for {} projects", maxConcurrentThreads, projects.size());
         System.out.println("========================================");
         System.out.println("Using thread pool with " + maxConcurrentThreads + " concurrent threads");
@@ -323,13 +327,24 @@ public class ParserController {
                 log.info("========================================");
                 
                 try {
+                    // Track thread start time
+                    String threadKey = finalProjectName + "-" + finalProjectId;
+                    activeThreads.put(threadKey, System.currentTimeMillis());
+                    
                     log.info("🔄 [GROUP THREAD] About to call parserService.processProject() for: {}", finalProjectName);
                     System.out.println("About to call parserService.processProject() for: " + finalProjectName);
                     System.out.flush();
                     
+                    long startTime = System.currentTimeMillis();
                     parserService.processProject(finalProject);
+                    long duration = System.currentTimeMillis() - startTime;
+                    
+                    // Remove from active threads
+                    activeThreads.remove(threadKey);
                     
                     int completed = completedCount.incrementAndGet();
+                    log.info("⏱️ [GROUP THREAD] Project {} completed in {} ms ({} seconds)", 
+                        finalProjectName, duration, duration / 1000);
                     log.info("🔄 [GROUP THREAD] parserService.processProject() completed for: {}", finalProjectName);
                     System.out.println("✅ Completed: " + finalProjectName + " (" + completed + "/" + projects.size() + " done)");
                     System.out.flush();
@@ -343,6 +358,10 @@ public class ParserController {
                     
                     log.info("✅ [GROUP THREAD COMPLETE] Successfully completed parsing for project: {}", finalProjectName);
                 } catch (Exception e) {
+                    // Remove from active threads on error
+                    String threadKey = finalProjectName + "-" + finalProjectId;
+                    activeThreads.remove(threadKey);
+                    
                     int errors = errorCount.incrementAndGet();
                     System.err.println("❌ THREAD ERROR for " + finalProjectName + ": " + e.getMessage());
                     System.err.println("Errors so far: " + errors);
@@ -352,6 +371,10 @@ public class ParserController {
                         finalProjectName, finalProjectId, e.getMessage(), e);
                     log.error("❌ [GROUP THREAD ERROR] Exception type: {}", e.getClass().getName());
                 } catch (Throwable t) {
+                    // Remove from active threads on fatal error
+                    String threadKey = finalProjectName + "-" + finalProjectId;
+                    activeThreads.remove(threadKey);
+                    
                     int errors = errorCount.incrementAndGet();
                     System.err.println("❌ THREAD FATAL ERROR for " + finalProjectName + ": " + t.getMessage());
                     t.printStackTrace();
@@ -359,6 +382,10 @@ public class ParserController {
                     log.error("❌ [GROUP THREAD FATAL] Fatal error during parsing for project {} (ID: {}): {}", 
                         finalProjectName, finalProjectId, t.getMessage(), t);
                 } finally {
+                    // Ensure thread is removed from active tracking
+                    String threadKey = finalProjectName + "-" + finalProjectId;
+                    activeThreads.remove(threadKey);
+                    
                     int completed = completedCount.get();
                     System.out.println("🏁 Thread finishing: " + Thread.currentThread().getName() + " (" + completed + "/" + projects.size() + " done)");
                     log.info("🏁 [GROUP THREAD] Thread finishing for project: {} ({}/{})", finalProjectName, completed, projects.size());
@@ -396,9 +423,25 @@ public class ParserController {
                     int completed = completedCount.get();
                     int errors = errorCount.get();
                     int total = completed + errors;
-                    log.info("📊 [GROUP PROGRESS] {}/{} projects completed ({} successful, {} errors)", 
-                        total, projects.size(), completed, errors);
-                    System.out.println("📊 [GROUP PROGRESS] " + total + "/" + projects.size() + " projects completed (" + completed + " successful, " + errors + " errors)");
+                    int remaining = projects.size() - total;
+                    int active = activeThreads.size();
+                    
+                    log.info("📊 [GROUP PROGRESS] {}/{} projects completed ({} successful, {} errors). Active threads: {}. Remaining: {}", 
+                        total, projects.size(), completed, errors, active, remaining);
+                    System.out.println("📊 [GROUP PROGRESS] " + total + "/" + projects.size() + " projects completed (" + completed + " successful, " + errors + " errors). Active: " + active + ", Remaining: " + remaining);
+                    
+                    // Log active threads if there are any (and not too many)
+                    if (!activeThreads.isEmpty() && activeThreads.size() <= 10) {
+                        long currentTime = System.currentTimeMillis();
+                        System.out.println("   Active threads:");
+                        activeThreads.forEach((projectName, startTime) -> {
+                            long runningTime = (currentTime - startTime) / 1000; // seconds
+                            System.out.println("   - " + projectName + " (running for " + runningTime + " seconds)");
+                        });
+                    } else if (activeThreads.size() > 10) {
+                        System.out.println("   (" + activeThreads.size() + " active threads - too many to list individually)");
+                    }
+                    
                     System.out.flush();
                 }
             } catch (InterruptedException e) {
