@@ -39,7 +39,98 @@ public class CobolParserService implements LanguageParser {
     @Override
     public boolean supports(File file) {
         String name = file.getName().toLowerCase();
-        return name.endsWith(".cbl") || name.endsWith(".cpy") || name.endsWith(".cob");
+        
+        // Check standard COBOL extensions
+        if (name.endsWith(".cbl") || name.endsWith(".cpy") || name.endsWith(".cob")) {
+            return true;
+        }
+        
+        // Check .txt files for COBOL content
+        if (name.endsWith(".txt")) {
+            return isCobolContent(file);
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Detects if a .txt file contains COBOL code by checking for COBOL keywords
+     */
+    private boolean isCobolContent(File file) {
+        try {
+            // Read first 50 lines to check for COBOL keywords
+            List<String> lines = Files.readAllLines(file.toPath(), StandardCharsets.UTF_8);
+            int checkLines = Math.min(50, lines.size());
+            
+            int cobolKeywordCount = 0;
+            boolean hasDataDivision = false;
+            boolean hasProcedureDivision = false;
+            boolean hasPicStatement = false;
+            
+            // COBOL keywords that indicate COBOL code
+            String[] cobolKeywords = {
+                "DATA DIVISION", "PROCEDURE DIVISION", "WORKING-STORAGE", "LINKAGE SECTION",
+                "IDENTIFICATION DIVISION", "ENVIRONMENT DIVISION", "PIC", "PICTURE",
+                "PERFORM", "CALL", "MOVE", "IF", "ELSE", "END-IF", "EVALUATE",
+                "COMPUTE", "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "GO TO", "GOBACK",
+                "EXIT PROGRAM", "INITIALIZE", "STRING", "UNSTRING", "INSPECT"
+            };
+            
+            for (int i = 0; i < checkLines; i++) {
+                String line = lines.get(i).toUpperCase().trim();
+                
+                // Check for division markers (strong indicators)
+                if (line.contains("DATA DIVISION")) {
+                    hasDataDivision = true;
+                    cobolKeywordCount += 3; // Strong indicator
+                }
+                if (line.contains("PROCEDURE DIVISION")) {
+                    hasProcedureDivision = true;
+                    cobolKeywordCount += 3; // Strong indicator
+                }
+                if (line.contains("IDENTIFICATION DIVISION")) {
+                    cobolKeywordCount += 2;
+                }
+                if (line.contains("ENVIRONMENT DIVISION")) {
+                    cobolKeywordCount += 2;
+                }
+                if (line.contains("WORKING-STORAGE")) {
+                    cobolKeywordCount += 2;
+                }
+                
+                // Check for PIC/PICTURE statements (very common in COBOL)
+                if (line.matches(".*\\bPIC\\s+[X9S]|.*\\bPICTURE\\s+[X9S]")) {
+                    hasPicStatement = true;
+                    cobolKeywordCount += 2;
+                }
+                
+                // Check for other COBOL keywords
+                for (String keyword : cobolKeywords) {
+                    if (line.contains(keyword)) {
+                        cobolKeywordCount++;
+                    }
+                }
+            }
+            
+            // File is likely COBOL if:
+            // 1. Has both DATA DIVISION and PROCEDURE DIVISION (strongest indicator)
+            // 2. Has DATA DIVISION and PIC statements
+            // 3. Has multiple COBOL keywords (threshold: 5+)
+            boolean isCobol = (hasDataDivision && hasProcedureDivision) ||
+                             (hasDataDivision && hasPicStatement) ||
+                             (cobolKeywordCount >= 5);
+            
+            if (isCobol) {
+                log.info("Detected COBOL content in .txt file: {} (keywords found: {}, has DATA DIVISION: {}, has PROCEDURE DIVISION: {})", 
+                    file.getName(), cobolKeywordCount, hasDataDivision, hasProcedureDivision);
+            }
+            
+            return isCobol;
+            
+        } catch (IOException e) {
+            log.warn("Error checking COBOL content in .txt file {}: {}", file.getName(), e.getMessage());
+            return false; // Fail-safe: don't treat as COBOL if we can't read it
+        }
     }
 
     @Override

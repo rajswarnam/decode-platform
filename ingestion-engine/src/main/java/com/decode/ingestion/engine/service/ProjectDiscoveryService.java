@@ -125,9 +125,17 @@ public class ProjectDiscoveryService {
             for (Path p : stream.collect(java.util.stream.Collectors.toList())) {
                 String s = p.toString().toLowerCase();
                 
-                // COBOL detection
+                // COBOL detection - check standard extensions
                 if (s.endsWith(".cbl") || s.endsWith(".cob") || s.endsWith(".cpy")) {
                     hasCobol = true;
+                }
+                
+                // COBOL detection - check .txt files for COBOL content (if not already detected)
+                if (!hasCobol && s.endsWith(".txt") && Files.isRegularFile(p)) {
+                    if (isCobolContent(p)) {
+                        hasCobol = true;
+                        log.debug("Detected COBOL content in .txt file: {}", p.getFileName());
+                    }
                 }
                 
                 // C/C++ detection by source files (not just build files)
@@ -206,6 +214,65 @@ public class ProjectDiscoveryService {
             log.warn("Error scanning dir for files: {}", dir, e);
         }
         return tech;
+    }
+    
+    /**
+     * Detects if a .txt file contains COBOL code by checking for COBOL keywords
+     * Used for tech stack detection during project discovery
+     */
+    private boolean isCobolContent(Path filePath) {
+        try {
+            // Read first 30 lines to check for COBOL keywords (faster than full file read)
+            List<String> lines = Files.readAllLines(filePath, java.nio.charset.StandardCharsets.UTF_8);
+            int checkLines = Math.min(30, lines.size());
+            
+            int cobolKeywordCount = 0;
+            boolean hasDataDivision = false;
+            boolean hasProcedureDivision = false;
+            boolean hasPicStatement = false;
+            
+            for (int i = 0; i < checkLines; i++) {
+                String line = lines.get(i).toUpperCase().trim();
+                
+                // Check for division markers (strong indicators)
+                if (line.contains("DATA DIVISION")) {
+                    hasDataDivision = true;
+                    cobolKeywordCount += 3;
+                }
+                if (line.contains("PROCEDURE DIVISION")) {
+                    hasProcedureDivision = true;
+                    cobolKeywordCount += 3;
+                }
+                if (line.contains("IDENTIFICATION DIVISION")) {
+                    cobolKeywordCount += 2;
+                }
+                if (line.contains("WORKING-STORAGE")) {
+                    cobolKeywordCount += 2;
+                }
+                
+                // Check for PIC/PICTURE statements
+                if (line.matches(".*\\bPIC\\s+[X9S]|.*\\bPICTURE\\s+[X9S]")) {
+                    hasPicStatement = true;
+                    cobolKeywordCount += 2;
+                }
+                
+                // Check for common COBOL keywords
+                if (line.contains("PERFORM") || line.contains("CALL") || 
+                    line.contains("MOVE") || line.contains("COMPUTE") ||
+                    line.contains("EVALUATE") || line.contains("GO TO")) {
+                    cobolKeywordCount++;
+                }
+            }
+            
+            // File is likely COBOL if it has strong indicators
+            return (hasDataDivision && hasProcedureDivision) ||
+                   (hasDataDivision && hasPicStatement) ||
+                   (cobolKeywordCount >= 5);
+            
+        } catch (IOException e) {
+            log.debug("Error checking COBOL content in .txt file {}: {}", filePath.getFileName(), e.getMessage());
+            return false; // Fail-safe: don't treat as COBOL if we can't read it
+        }
     }
 
     private void registerProject(Path dir, List<String> techStack, String gitUrl, Path rootPath, String contextName, String targetDomain) {
