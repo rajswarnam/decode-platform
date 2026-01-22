@@ -269,11 +269,25 @@ public class ParserOrchestratorService {
                 int i = objectKey.lastIndexOf('.');
                 if (i > 0) extension = objectKey.substring(i);
 
+                // Log extension detection for ACLF files
+                if (objectKey.toLowerCase().contains("aclf") || extension.toLowerCase().equals(".aclf")) {
+                    log.info("🔍 [FILE CHECK] Processing potential ACLF file: {} (extension: {}, tempFile: {})", 
+                        objectKey, extension, tempFile != null ? tempFile.getName() : "null");
+                }
+
                 tempFile = Files.createTempFile("parser-", extension).toFile();
                 Files.copy(stream, tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                
+                // Log temp file name for ACLF files
+                if (objectKey.toLowerCase().contains("aclf") || extension.toLowerCase().equals(".aclf")) {
+                    log.info("🔍 [FILE CHECK] Created temp file: {} (original: {})", tempFile.getName(), objectKey);
+                }
             }
 
             if (isBinaryFile(tempFile)) {
+                if (objectKey.toLowerCase().contains("aclf")) {
+                    log.warn("⚠️ [BINARY CHECK] ACLF file {} detected as binary, skipping", objectKey);
+                }
                 Files.deleteIfExists(tempFile.toPath());
                 return false;
             }
