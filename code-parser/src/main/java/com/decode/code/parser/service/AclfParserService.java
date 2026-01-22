@@ -280,7 +280,7 @@ public class AclfParserService implements LanguageParser {
         }
         
         // Pattern 3: Transaction definitions
-        // Example: Transaction HSUSAL2 { Execute() { ... } }
+        // Example: Transaction VKWFLOSA { MajorFunction = ...; SubFunction = ...; Execute() { ... } }
         java.util.regex.Pattern transactionPattern = java.util.regex.Pattern.compile(
             "Transaction\\s+(\\w+)\\s*\\{", 
             java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
@@ -298,17 +298,128 @@ public class AclfParserService implements LanguageParser {
             tags.add(ps);
             log.debug("Found Transaction: {}", transactionName);
             
+            // Extract transaction properties (MajorFunction, SubFunction, NextTransaction, etc.)
+            // Find the transaction block content
+            int transactionStart = transactionMatcher.end();
+            int transactionEnd = findMatchingBrace(content, transactionStart);
+            if (transactionEnd > transactionStart) {
+                String transactionBlock = content.substring(transactionStart, transactionEnd);
+                
+                // Extract MajorFunction
+                java.util.regex.Pattern majorFunctionPattern = java.util.regex.Pattern.compile(
+                    "MajorFunction\\s*=\\s*([^;]+);", 
+                    java.util.regex.Pattern.CASE_INSENSITIVE
+                );
+                java.util.regex.Matcher majorFunctionMatcher = majorFunctionPattern.matcher(transactionBlock);
+                if (majorFunctionMatcher.find()) {
+                    String majorFunction = majorFunctionMatcher.group(1).trim();
+                    ps.setType("Transaction (MajorFunction: " + majorFunction + ")");
+                }
+                
+                // Extract SubFunction
+                java.util.regex.Pattern subFunctionPattern = java.util.regex.Pattern.compile(
+                    "SubFunction\\s*=\\s*([^;]+);", 
+                    java.util.regex.Pattern.CASE_INSENSITIVE
+                );
+                java.util.regex.Matcher subFunctionMatcher = subFunctionPattern.matcher(transactionBlock);
+                if (subFunctionMatcher.find()) {
+                    String subFunction = subFunctionMatcher.group(1).trim();
+                    String currentType = ps.getType();
+                    ps.setType(currentType + ", SubFunction: " + subFunction);
+                }
+                
+                // Extract NextTransaction
+                java.util.regex.Pattern nextTransactionPattern = java.util.regex.Pattern.compile(
+                    "NextTransaction\\s*=\\s*Transaction\\.(\\w+);", 
+                    java.util.regex.Pattern.CASE_INSENSITIVE
+                );
+                java.util.regex.Matcher nextTransactionMatcher = nextTransactionPattern.matcher(transactionBlock);
+                if (nextTransactionMatcher.find()) {
+                    String nextTransaction = nextTransactionMatcher.group(1);
+                    // Add as a separate symbol reference
+                    ParsedSymbol nextPs = new ParsedSymbol();
+                    nextPs.setName(nextTransaction);
+                    nextPs.setCategory("ACLF_TRANSACTION_REFERENCE");
+                    nextPs.setType("NextTransaction from " + transactionName);
+                    int nextLineNumber = content.substring(0, transactionStart + nextTransactionMatcher.start()).split("\n").length;
+                    nextPs.setStartLine(nextLineNumber);
+                    nextPs.setEndLine(nextLineNumber);
+                    tags.add(nextPs);
+                    log.debug("Found NextTransaction reference: {} from {}", nextTransaction, transactionName);
+                }
+            }
+            
             // Try to extract transaction purpose from comments (if available)
             // Look for comments before transaction definition
-            int transactionStart = transactionMatcher.start();
-            String beforeTransaction = content.substring(Math.max(0, transactionStart - 500), transactionStart);
+            int transactionStartForComments = transactionMatcher.start();
+            String beforeTransaction = content.substring(Math.max(0, transactionStartForComments - 500), transactionStartForComments);
             java.util.regex.Pattern commentPattern = java.util.regex.Pattern.compile("//\\s*(.+?)\\n", java.util.regex.Pattern.MULTILINE);
             java.util.regex.Matcher commentMatcher = commentPattern.matcher(beforeTransaction);
             if (commentMatcher.find()) {
                 String comment = commentMatcher.group(1).trim();
                 if (comment.length() > 0 && comment.length() < 200) {
-                    ps.setType("Transaction: " + comment);
+                    String currentType = ps.getType();
+                    if (currentType.equals("Transaction")) {
+                        ps.setType("Transaction: " + comment);
+                    } else {
+                        ps.setType(currentType + " (" + comment + ")");
+                    }
                 }
+            }
+        }
+        
+        // Pattern 3b: Extract Transaction references from PerformTransaction calls
+        // Example: PerformTransaction(Transaction: Transaction.BKWFLOS);
+        // Example: PerformTransaction(Transaction: Transaction.VKWFLOSA);
+        java.util.regex.Pattern performTransactionPattern = java.util.regex.Pattern.compile(
+            "PerformTransaction\\s*\\([^)]*Transaction\\s*:\\s*Transaction\\.(\\w+)", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher performTransactionMatcher = performTransactionPattern.matcher(content);
+        java.util.Set<String> transactionReferences = new java.util.HashSet<>();
+        while (performTransactionMatcher.find()) {
+            String referencedTransaction = performTransactionMatcher.group(1);
+            
+            // Avoid duplicates
+            if (!transactionReferences.contains(referencedTransaction)) {
+                transactionReferences.add(referencedTransaction);
+                
+                ParsedSymbol ps = new ParsedSymbol();
+                ps.setName(referencedTransaction);
+                ps.setCategory("ACLF_TRANSACTION_REFERENCE");
+                ps.setType("Transaction referenced in PerformTransaction call");
+                int lineNumber = content.substring(0, performTransactionMatcher.start()).split("\n").length;
+                ps.setStartLine(lineNumber);
+                ps.setEndLine(lineNumber);
+                tags.add(ps);
+                log.debug("Found Transaction reference in PerformTransaction: {}", referencedTransaction);
+            }
+        }
+        
+        // Pattern 3c: Extract Transaction references from other contexts
+        // Example: Transaction.BKWFLOS (standalone reference)
+        // Example: if (Transaction.BKWFLOS == ...)
+        java.util.regex.Pattern transactionRefPattern = java.util.regex.Pattern.compile(
+            "Transaction\\.(\\w+)", 
+            java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher transactionRefMatcher = transactionRefPattern.matcher(content);
+        while (transactionRefMatcher.find()) {
+            String referencedTransaction = transactionRefMatcher.group(1);
+            
+            // Skip if already found in PerformTransaction pattern
+            if (!transactionReferences.contains(referencedTransaction)) {
+                transactionReferences.add(referencedTransaction);
+                
+                ParsedSymbol ps = new ParsedSymbol();
+                ps.setName(referencedTransaction);
+                ps.setCategory("ACLF_TRANSACTION_REFERENCE");
+                ps.setType("Transaction reference");
+                int lineNumber = content.substring(0, transactionRefMatcher.start()).split("\n").length;
+                ps.setStartLine(lineNumber);
+                ps.setEndLine(lineNumber);
+                tags.add(ps);
+                log.debug("Found Transaction reference: {}", referencedTransaction);
             }
         }
         
@@ -535,6 +646,28 @@ public class AclfParserService implements LanguageParser {
         long totalDatafieldReferences = tags.stream().filter(t -> t.getCategory().equals("ACLF_DATAFIELD_REFERENCE")).count();
         log.info("Final parsing summary for {}: {} total symbols ({} FieldReferences, {} DatafieldReferences)", 
                 file.getName(), tags.size(), totalFieldReferences, totalDatafieldReferences);
+    }
+    
+    /**
+     * Helper method to find the matching closing brace for a given opening brace position
+     * Used to extract content within Transaction/Calculation/FormBlock blocks
+     */
+    private int findMatchingBrace(String content, int startPos) {
+        if (startPos >= content.length()) return -1;
+        
+        int depth = 0;
+        for (int i = startPos; i < content.length(); i++) {
+            char c = content.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1; // No matching brace found
     }
     
     /**
