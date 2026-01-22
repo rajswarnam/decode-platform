@@ -32,3 +32,10 @@ parser:
   # Set to true if you want parsing to run automatically on every startup
   # Recommended: false - projects will be parsed during ingestion or via API
   auto-parse-on-startup: false
+
+# LLM Gateway configuration
+# Uses llm-gateway-service which calls the internal gateway with proper authentication
+llm:
+  gateway:
+    url: ${LLM_GATEWAY_URL:http://llm-gateway-service:8081}
+    model: ${LLM_GATEWAY_MODEL:gpt-4o}
