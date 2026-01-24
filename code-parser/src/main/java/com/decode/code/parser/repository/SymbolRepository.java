@@ -2,6 +2,7 @@ package com.decode.code.parser.repository;
 
 import com.decode.code.parser.domain.Symbol;
 import com.decode.code.parser.domain.Project;
+import com.decode.code.parser.domain.SourceFile;
 import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 import java.util.Optional;
@@ -17,4 +18,8 @@ public interface SymbolRepository extends JpaRepository<Symbol, UUID> {
     long countBySourceFile_Project_Id(UUID projectId);
     
     long countBySourceFile_Project(Project project);
+    
+    // Duplicate checking: Find symbol by name, category, sourceFile, and startLine
+    Optional<Symbol> findByNameAndCategoryAndSourceFileAndStartLine(
+        String name, String category, SourceFile sourceFile, int startLine);
 }

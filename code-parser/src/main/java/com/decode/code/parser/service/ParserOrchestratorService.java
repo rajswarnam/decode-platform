@@ -392,26 +392,44 @@ public class ParserOrchestratorService {
         // Save symbols and build a map for relationship resolution
         java.util.Map<String, Symbol> symbolMap = new java.util.HashMap<>();
         int added = 0;
+        int skipped = 0;
+        
         for (ParsedSymbol dto : symbols) {
-            // Check if symbol exists to avoid duplicates? Ideally yes.
-            // For now, simple insert
-            Symbol symbol = new Symbol();
-            symbol.setSourceFile(sourceFile);
-            symbol.setName(dto.getName());
-            symbol.setCategory(dto.getCategory());
-            symbol.setDataType(dto.getType());
-            symbol.setStartLine(dto.getStartLine());
-            symbol.setEndLine(dto.getEndLine());
-            symbol = symbolRepository.save(symbol);
+            // Check if symbol already exists to avoid duplicates
+            // A symbol is considered duplicate if: same name, category, sourceFile, and startLine
+            Optional<Symbol> existingSymbol = symbolRepository.findByNameAndCategoryAndSourceFileAndStartLine(
+                dto.getName(), dto.getCategory(), sourceFile, dto.getStartLine());
             
-            // Index by name for relationship lookup (simple approach - may need to handle duplicates better)
+            Symbol symbol;
+            if (existingSymbol.isPresent()) {
+                // Symbol already exists - use existing one
+                symbol = existingSymbol.get();
+                skipped++;
+                log.debug("Symbol already exists, skipping: {} ({}:{}) in {}", 
+                    dto.getName(), dto.getCategory(), dto.getStartLine(), storageKey);
+            } else {
+                // New symbol - create and save
+                symbol = new Symbol();
+                symbol.setSourceFile(sourceFile);
+                symbol.setName(dto.getName());
+                symbol.setCategory(dto.getCategory());
+                symbol.setDataType(dto.getType());
+                symbol.setStartLine(dto.getStartLine());
+                symbol.setStartColumn(dto.getStartColumn());
+                symbol.setEndLine(dto.getEndLine());
+                symbol.setEndColumn(dto.getEndColumn());
+                symbol = symbolRepository.save(symbol);
+                added++;
+            }
+            
+            // Index by name for relationship lookup (use first occurrence if duplicates exist)
             if (!symbolMap.containsKey(dto.getName())) {
                 symbolMap.put(dto.getName(), symbol);
             }
-            added++;
         }
-        if (added > 0) {
-            log.info("✅ Saved {} symbols for {} (Project: {})", added, storageKey, project.getName());
+        if (added > 0 || skipped > 0) {
+            log.info("✅ Saved {} new symbols, skipped {} duplicates for {} (Project: {})", 
+                added, skipped, storageKey, project.getName());
         } else {
             log.debug("No symbols extracted from {}", storageKey);
         }
