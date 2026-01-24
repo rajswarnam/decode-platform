@@ -4,7 +4,10 @@ import io.minio.MinioClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
+
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 public class MinioConfig {
@@ -17,6 +20,12 @@ public class MinioConfig {
 
     @Value("${minio.secret-key:minioadmin}")
     private String secretKey;
+    
+    @Value("${parser.http.connect-timeout:30000}")
+    private int connectTimeout;
+    
+    @Value("${parser.http.read-timeout:60000}")
+    private int readTimeout;
 
     @Bean
     public MinioClient minioClient() {
@@ -28,6 +37,9 @@ public class MinioConfig {
     
     @Bean
     public RestTemplate restTemplate() {
-        return new RestTemplate();
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(connectTimeout); // 30 seconds
+        factory.setReadTimeout(readTimeout); // 60 seconds
+        return new RestTemplate(factory);
     }
 }

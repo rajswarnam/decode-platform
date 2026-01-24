@@ -431,15 +431,38 @@ public class ParserController {
                     System.out.println("📊 [GROUP PROGRESS] " + total + "/" + projects.size() + " projects completed (" + completed + " successful, " + errors + " errors). Active: " + active + ", Remaining: " + remaining);
                     
                     // Log active threads if there are any (and not too many)
-                    if (!activeThreads.isEmpty() && activeThreads.size() <= 10) {
+                    if (!activeThreads.isEmpty()) {
                         long currentTime = System.currentTimeMillis();
-                        System.out.println("   Active threads:");
-                        activeThreads.forEach((projectName, startTime) -> {
-                            long runningTime = (currentTime - startTime) / 1000; // seconds
-                            System.out.println("   - " + projectName + " (running for " + runningTime + " seconds)");
-                        });
-                    } else if (activeThreads.size() > 10) {
-                        System.out.println("   (" + activeThreads.size() + " active threads - too many to list individually)");
+                        long maxRunningTime = 0;
+                        String longestRunningProject = null;
+                        
+                        // Find the longest running thread
+                        for (Map.Entry<String, Long> entry : activeThreads.entrySet()) {
+                            long runningTime = (currentTime - entry.getValue()) / 1000; // seconds
+                            if (runningTime > maxRunningTime) {
+                                maxRunningTime = runningTime;
+                                longestRunningProject = entry.getKey();
+                            }
+                        }
+                        
+                        if (activeThreads.size() <= 10) {
+                            System.out.println("   Active threads (" + activeThreads.size() + "):");
+                            activeThreads.forEach((projectName, startTime) -> {
+                                long runningTime = (currentTime - startTime) / 1000; // seconds
+                                String status = runningTime > 300 ? "⚠️ STUCK (>5min)" : runningTime > 120 ? "⚠️ SLOW (>2min)" : "";
+                                System.out.println("   - " + projectName + " (running for " + runningTime + " seconds) " + status);
+                            });
+                        } else {
+                            System.out.println("   (" + activeThreads.size() + " active threads)");
+                            if (longestRunningProject != null) {
+                                System.out.println("   ⚠️ Longest running: " + longestRunningProject + " (" + maxRunningTime + " seconds)");
+                            }
+                        }
+                        
+                        // Warn if threads are stuck
+                        if (maxRunningTime > 600) { // 10 minutes
+                            System.out.println("   ⚠️⚠️⚠️ WARNING: Some threads have been running for >10 minutes. They may be stuck!");
+                        }
                     }
                     
                     System.out.flush();
