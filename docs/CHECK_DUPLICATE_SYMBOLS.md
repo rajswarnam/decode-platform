@@ -25,7 +25,7 @@ SELECT
     s.start_line,
     COUNT(*) as duplicate_count
 FROM symbols s
-JOIN source_files sf ON s.source_file_id = sf.id
+JOIN source_files sf ON s.file_id = sf.id
 GROUP BY s.name, s.category, sf.id, s.start_line
 HAVING COUNT(*) > 1
 ORDER BY duplicate_count DESC;
@@ -38,7 +38,7 @@ ORDER BY duplicate_count DESC;
 SELECT 
     COUNT(*) - COUNT(DISTINCT (s.name, s.category, sf.id, s.start_line)) as total_duplicates
 FROM symbols s
-JOIN source_files sf ON s.source_file_id = sf.id;
+JOIN source_files sf ON s.file_id = sf.id;
 ```
 
 ### Find Duplicates by Project
@@ -53,7 +53,7 @@ SELECT
     s.start_line,
     COUNT(*) as duplicate_count
 FROM symbols s
-JOIN source_files sf ON s.source_file_id = sf.id
+JOIN source_files sf ON s.file_id = sf.id
 JOIN projects p ON sf.project_id = p.id
 WHERE p.name LIKE '%fusion%'  -- Change to your project name
 GROUP BY p.name, s.name, s.category, sf.id, s.start_line
@@ -75,7 +75,7 @@ WHERE id IN (
     FROM (
         SELECT id,
                ROW_NUMBER() OVER (
-                   PARTITION BY name, category, source_file_id, start_line 
+                   PARTITION BY name, category, file_id, start_line 
                    ORDER BY id
                ) as rn
         FROM symbols
@@ -96,7 +96,7 @@ WHERE id IN (
     FROM (
         SELECT id,
                ROW_NUMBER() OVER (
-                   PARTITION BY name, category, source_file_id, start_line 
+                   PARTITION BY name, category, file_id, start_line 
                    ORDER BY id DESC
                ) as rn
         FROM symbols
@@ -117,7 +117,7 @@ public void cleanupDuplicateSymbols() {
         SELECT id FROM (
             SELECT id,
                    ROW_NUMBER() OVER (
-                       PARTITION BY name, category, source_file_id, start_line 
+                       PARTITION BY name, category, file_id, start_line 
                        ORDER BY id
                    ) as rn
             FROM symbols
@@ -155,7 +155,7 @@ SELECT COUNT(*) as will_be_deleted
 FROM (
     SELECT id,
            ROW_NUMBER() OVER (
-               PARTITION BY name, category, source_file_id, start_line 
+               PARTITION BY name, category, file_id, start_line 
                ORDER BY id
            ) as rn
     FROM symbols
@@ -175,7 +175,7 @@ WHERE sr.source_symbol_id IN (
     SELECT id FROM (
         SELECT id,
                ROW_NUMBER() OVER (
-                   PARTITION BY name, category, source_file_id, start_line 
+                   PARTITION BY name, category, file_id, start_line 
                    ORDER BY id
                ) as rn
         FROM symbols
@@ -186,7 +186,7 @@ OR sr.target_symbol_id IN (
     SELECT id FROM (
         SELECT id,
                ROW_NUMBER() OVER (
-                   PARTITION BY name, category, source_file_id, start_line 
+                   PARTITION BY name, category, file_id, start_line 
                    ORDER BY id
                ) as rn
         FROM symbols
@@ -216,7 +216,7 @@ SELECT COUNT(*) as duplicates
 FROM (
     SELECT id,
            ROW_NUMBER() OVER (
-               PARTITION BY name, category, source_file_id, start_line 
+               PARTITION BY name, category, file_id, start_line 
                ORDER BY id
            ) as rn
     FROM symbols
