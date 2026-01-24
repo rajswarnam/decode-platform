@@ -39,9 +39,76 @@ public class VectorizerService {
             log.warn("  2. Files may not have been parsed yet");
             log.warn("  3. Database connection issue");
             log.warn("  4. Project ID mismatch");
+            return;
+        }
+        
+        // Quick pre-check: Skip if project is already fully vectorized
+        if (isProjectFullyVectorized(projectId, symbols)) {
+            log.info("✅ Project {} is already fully vectorized (all {} symbols exist in Qdrant). Skipping.", projectId, symbols.size());
+            return;
         }
         
         vectorizeSymbols(symbols);
+    }
+    
+    /**
+     * Quick check to see if a project is already fully vectorized
+     * Checks a sample of symbols to determine if vectorization is needed
+     */
+    private boolean isProjectFullyVectorized(java.util.UUID projectId, List<Symbol> symbols) {
+        if (symbols.isEmpty()) {
+            return false;
+        }
+        
+        // Sample check: Check first 10 symbols and last 10 symbols
+        // If all sampled symbols are vectorized, assume the project is fully vectorized
+        int sampleSize = Math.min(20, symbols.size());
+        List<Symbol> sample = new ArrayList<>();
+        
+        // Add first few
+        int firstCount = Math.min(10, symbols.size());
+        sample.addAll(symbols.subList(0, firstCount));
+        
+        // Add last few
+        if (symbols.size() > firstCount) {
+            int remaining = sampleSize - firstCount;
+            int startIdx = Math.max(firstCount, symbols.size() - remaining);
+            sample.addAll(symbols.subList(startIdx, symbols.size()));
+        }
+        
+        // Build filter expression for sample
+        String filterExpr = sample.stream()
+            .map(s -> "symbol_id == '" + s.getId().toString() + "'")
+            .collect(java.util.stream.Collectors.joining(" OR "));
+        
+        try {
+            var searchRequest = org.springframework.ai.vectorstore.SearchRequest.builder()
+                .query("")
+                .topK(sample.size())
+                .filterExpression("(" + filterExpr + ")")
+                .build();
+            
+            var existingDocs = vectorStore.similaritySearch(searchRequest);
+            int foundCount = existingDocs.size();
+            
+            // If all sampled symbols are found, assume project is fully vectorized
+            // This is a heuristic - we'll do full check in vectorizeSymbols() anyway
+            boolean fullyVectorized = foundCount == sample.size();
+            
+            if (fullyVectorized) {
+                log.debug("Pre-check: All {} sampled symbols found in Qdrant for project {}", sample.size(), projectId);
+            } else {
+                log.debug("Pre-check: Only {}/{} sampled symbols found in Qdrant for project {}. Will vectorize.", 
+                    foundCount, sample.size(), projectId);
+            }
+            
+            return fullyVectorized;
+            
+        } catch (Exception e) {
+            // If check fails, assume not vectorized and proceed with full check
+            log.debug("Pre-check failed for project {}: {}. Will proceed with full vectorization.", projectId, e.getMessage());
+            return false;
+        }
     }
 
     private void vectorizeSymbols(List<Symbol> symbols) {

@@ -28,6 +28,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -106,6 +107,25 @@ public class ParserOrchestratorService {
                     "Files are parsed but NOT vectorized. Vectorizer will process on next ingestion or manual trigger.",
                     project.getName());
             return;
+        }
+        
+        // Quick check: See if project is already vectorized (optional optimization)
+        // This prevents unnecessary vectorization triggers
+        try {
+            String statusUrl = vectorizerUrl + "/api/vectorizer/status?projectId=" + project.getId();
+            ResponseEntity<Map> statusResponse = restTemplate.getForEntity(statusUrl, Map.class);
+            if (statusResponse.getStatusCode().is2xxSuccessful() && statusResponse.getBody() != null) {
+                Map<String, Object> status = statusResponse.getBody();
+                String vectorStatus = (String) status.getOrDefault("status", "PENDING");
+                if ("COMPLETED".equals(vectorStatus)) {
+                    log.info("ℹ️ Project {} is already vectorized. Skipping vectorization trigger.", project.getName());
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            // If status check fails, proceed with vectorization trigger anyway
+            log.debug("Could not check vectorization status for project {}: {}. Will trigger vectorization.", 
+                project.getName(), e.getMessage());
         }
         
         int maxRetries = 3; // Reduced retries since we check readiness first
