@@ -53,17 +53,61 @@ public class VectorizerService {
         }
 
         // Filter out symbols that are already vectorized by checking Qdrant
-        // Qdrant's add() method will create duplicates, so we need to check first
+        // OPTIMIZATION: Batch check for duplicates to reduce Qdrant load
+        // Check symbols in batches of 50 to avoid overwhelming Qdrant
         List<Document> documentsToAdd = new ArrayList<>();
         int alreadyVectorizedCount = 0;
+        Set<String> alreadyVectorizedIds = new java.util.HashSet<>();
         
+        // Batch check: Process symbols in batches of 50
+        int batchSize = 50;
+        for (int i = 0; i < symbols.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, symbols.size());
+            List<Symbol> batch = symbols.subList(i, end);
+            
+            // Build OR filter for this batch
+            String filterExpr = batch.stream()
+                .map(s -> "symbol_id == '" + s.getId().toString() + "'")
+                .collect(java.util.stream.Collectors.joining(" OR "));
+            
+            try {
+                var searchRequest = org.springframework.ai.vectorstore.SearchRequest.builder()
+                    .query("") // Empty query - just checking existence
+                    .topK(batch.size())
+                    .filterExpression("(" + filterExpr + ")")
+                    .build();
+                
+                var existingDocs = vectorStore.similaritySearch(searchRequest);
+                
+                // Track which symbols already exist
+                for (var doc : existingDocs) {
+                    String existingId = (String) doc.getMetadata().get("symbol_id");
+                    if (existingId != null) {
+                        alreadyVectorizedIds.add(existingId);
+                    }
+                }
+                
+                alreadyVectorizedCount += existingDocs.size();
+                
+            } catch (Exception e) {
+                // If batch check fails, log and continue (will check individually below)
+                log.warn("Batch duplicate check failed for batch {}-{}: {}. Will check individually.", i, end, e.getMessage());
+            }
+        }
+        
+        // Now process symbols and only add those that weren't found in batch check
         for (Symbol symbol : symbols) {
             String symbolId = symbol.getId().toString();
             
-            // Check if this symbol is already in Qdrant by searching for it using symbol_id metadata
+            // Skip if already vectorized (from batch check)
+            if (alreadyVectorizedIds.contains(symbolId)) {
+                continue;
+            }
+            
+            // Fallback: Individual check if batch check didn't work
             try {
                 var searchRequest = org.springframework.ai.vectorstore.SearchRequest.builder()
-                    .query("") // Empty query - we're just checking existence
+                    .query("")
                     .topK(1)
                     .filterExpression("symbol_id == '" + symbolId + "'")
                     .build();
@@ -71,12 +115,11 @@ public class VectorizerService {
                 var existingDocs = vectorStore.similaritySearch(searchRequest);
                 
                 if (!existingDocs.isEmpty()) {
-                    // Symbol already exists in Qdrant - skip it
                     alreadyVectorizedCount++;
+                    alreadyVectorizedIds.add(symbolId);
                     continue;
                 }
             } catch (Exception e) {
-                // If filter/search fails, log and continue (might be first run or Qdrant issue)
                 log.debug("Could not check if symbol {} exists in Qdrant: {}. Will add it.", symbolId, e.getMessage());
             }
             
