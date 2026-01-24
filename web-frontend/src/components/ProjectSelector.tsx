@@ -243,8 +243,12 @@ export const ProjectSelector = ({
             ) : (
               sortedGroupKeys.map(domain => {
                 const domainProjects = filteredGroups[domain];
+                const allGroupProjects = groupedProjects[domain] || [];
                 const isExpanded = expandedGroups.has(domain);
                 const domainSelectedCount = domainProjects.filter(p => selectedProjects.includes(p.name)).length;
+                const allGroupSelected = allGroupProjects.length > 0 && 
+                  allGroupProjects.every(p => selectedProjects.includes(p.name));
+                const someGroupSelected = allGroupProjects.some(p => selectedProjects.includes(p.name));
 
                 return (
                   <div key={domain} style={{ marginBottom: '8px' }}>
@@ -270,17 +274,20 @@ export const ProjectSelector = ({
                             style={{
                               width: '18px',
                               height: '18px',
-                              border: `2px solid ${domainSelectedCount === domainProjects.length ? 'var(--primary)' : '#64748b'}`,
+                              border: `2px solid ${allGroupSelected ? 'var(--primary)' : someGroupSelected ? 'var(--primary)' : '#64748b'}`,
                               borderRadius: '4px',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
-                              background: domainSelectedCount === domainProjects.length ? 'var(--primary)' : 'transparent',
+                              background: allGroupSelected ? 'var(--primary)' : someGroupSelected ? 'rgba(16,185,129,0.3)' : 'transparent',
                               flexShrink: 0,
                               cursor: 'pointer'
                             }}
                           >
-                            {domainSelectedCount === domainProjects.length && <Check size={12} color="white" />}
+                            {allGroupSelected && <Check size={12} color="white" />}
+                            {someGroupSelected && !allGroupSelected && (
+                              <div style={{ width: '10px', height: '2px', background: 'var(--primary)' }} />
+                            )}
                           </div>
                         )}
                         
