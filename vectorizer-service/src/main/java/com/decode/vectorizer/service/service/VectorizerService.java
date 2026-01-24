@@ -10,7 +10,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
@@ -124,7 +126,7 @@ public class VectorizerService {
         // Check symbols in batches of 50 to avoid overwhelming Qdrant
         List<Document> documentsToAdd = new ArrayList<>();
         int alreadyVectorizedCount = 0;
-        Set<String> alreadyVectorizedIds = new java.util.HashSet<>();
+        Set<String> alreadyVectorizedIds = new HashSet<>();
         
         // Batch check: Process symbols in batches of 50
         int batchSize = 50;
