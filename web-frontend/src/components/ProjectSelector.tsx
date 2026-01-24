@@ -96,6 +96,31 @@ export const ProjectSelector = ({
     onSelectionChange(newSelection);
   };
 
+  const toggleGroupSelection = (domain: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent group expand/collapse when clicking checkbox
+    
+    if (!multiSelect) {
+      return; // Only works in multi-select mode
+    }
+
+    // Use groupedProjects to get ALL projects in the group, not just filtered ones
+    const domainProjects = groupedProjects[domain] || [];
+    const allSelected = domainProjects.length > 0 && domainProjects.every(p => selectedProjects.includes(p.name));
+    
+    if (allSelected) {
+      // Deselect all projects in this group
+      const newSelection = selectedProjects.filter(p => 
+        !domainProjects.some(dp => dp.name === p)
+      );
+      onSelectionChange(newSelection);
+    } else {
+      // Select all projects in this group
+      const projectNames = domainProjects.map(p => p.name);
+      const newSelection = [...new Set([...selectedProjects, ...projectNames])];
+      onSelectionChange(newSelection);
+    }
+  };
+
   const clearSelection = () => {
     onSelectionChange([]);
   };
@@ -226,7 +251,6 @@ export const ProjectSelector = ({
                     {/* Group Header */}
                     {showGroups && (
                       <div
-                        onClick={() => toggleGroup(domain)}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -239,26 +263,53 @@ export const ProjectSelector = ({
                           marginBottom: '4px'
                         }}
                       >
-                        <Folder size={14} color="#64748b" />
-                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', flex: 1 }}>
-                          {domain}
-                        </span>
-                        {multiSelect && domainSelectedCount > 0 && (
-                          <span style={{
-                            fontSize: '10px',
-                            background: 'var(--primary)',
-                            color: 'white',
-                            padding: '2px 6px',
-                            borderRadius: '10px',
-                            fontWeight: 600
-                          }}>
-                            {domainSelectedCount}/{domainProjects.length}
-                          </span>
+                        {/* Group Selection Checkbox (only in multi-select mode) */}
+                        {multiSelect && (
+                          <div
+                            onClick={(e) => toggleGroupSelection(domain, e)}
+                            style={{
+                              width: '18px',
+                              height: '18px',
+                              border: `2px solid ${domainSelectedCount === domainProjects.length ? 'var(--primary)' : '#64748b'}`,
+                              borderRadius: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              background: domainSelectedCount === domainProjects.length ? 'var(--primary)' : 'transparent',
+                              flexShrink: 0,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {domainSelectedCount === domainProjects.length && <Check size={12} color="white" />}
+                          </div>
                         )}
-                        <span style={{ fontSize: '11px', color: '#64748b' }}>
-                          {domainProjects.length} project{domainProjects.length !== 1 ? 's' : ''}
-                        </span>
-                        {isExpanded ? <ChevronUp size={14} color="#64748b" /> : <ChevronDown size={14} color="#64748b" />}
+                        
+                        {/* Group Name and Expand/Collapse */}
+                        <div
+                          onClick={() => toggleGroup(domain)}
+                          style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, cursor: 'pointer' }}
+                        >
+                          <Folder size={14} color="#64748b" />
+                          <span style={{ fontSize: '12px', fontWeight: 600, color: '#94a3b8', flex: 1 }}>
+                            {domain}
+                          </span>
+                          {multiSelect && domainSelectedCount > 0 && (
+                            <span style={{
+                              fontSize: '10px',
+                              background: 'var(--primary)',
+                              color: 'white',
+                              padding: '2px 6px',
+                              borderRadius: '10px',
+                              fontWeight: 600
+                            }}>
+                              {domainSelectedCount}/{domainProjects.length}
+                            </span>
+                          )}
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>
+                            {domainProjects.length} project{domainProjects.length !== 1 ? 's' : ''}
+                          </span>
+                          {isExpanded ? <ChevronUp size={14} color="#64748b" /> : <ChevronDown size={14} color="#64748b" />}
+                        </div>
                       </div>
                     )}
 
