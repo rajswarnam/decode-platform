@@ -19,7 +19,8 @@ public interface SymbolRepository extends JpaRepository<Symbol, UUID> {
     
     long countBySourceFile_Project(Project project);
     
-    // Duplicate checking: Find symbol by name, category, sourceFile, and startLine
-    Optional<Symbol> findByNameAndCategoryAndSourceFileAndStartLine(
+    // Duplicate checking: Find symbols by name, category, sourceFile, and startLine
+    // Returns List because there may be duplicates (which is what we're checking for)
+    List<Symbol> findByNameAndCategoryAndSourceFileAndStartLine(
         String name, String category, SourceFile sourceFile, int startLine);
 }

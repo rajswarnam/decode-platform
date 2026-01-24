@@ -398,16 +398,22 @@ public class ParserOrchestratorService {
         for (ParsedSymbol dto : symbols) {
             // Check if symbol already exists to avoid duplicates
             // A symbol is considered duplicate if: same name, category, sourceFile, and startLine
-            Optional<Symbol> existingSymbol = symbolRepository.findByNameAndCategoryAndSourceFileAndStartLine(
+            // Use List instead of Optional because there may be existing duplicates
+            List<Symbol> existingSymbols = symbolRepository.findByNameAndCategoryAndSourceFileAndStartLine(
                 dto.getName(), dto.getCategory(), sourceFile, dto.getStartLine());
             
             Symbol symbol;
-            if (existingSymbol.isPresent()) {
-                // Symbol already exists - use existing one
-                symbol = existingSymbol.get();
+            if (!existingSymbols.isEmpty()) {
+                // Symbol already exists (may be duplicates) - use the first one
+                symbol = existingSymbols.get(0);
                 skipped++;
-                log.debug("Symbol already exists, skipping: {} ({}:{}) in {}", 
-                    dto.getName(), dto.getCategory(), dto.getStartLine(), storageKey);
+                if (existingSymbols.size() > 1) {
+                    log.warn("Found {} duplicate symbols for {} ({}:{}) in {}. Using first one.", 
+                        existingSymbols.size(), dto.getName(), dto.getCategory(), dto.getStartLine(), storageKey);
+                } else {
+                    log.debug("Symbol already exists, skipping: {} ({}:{}) in {}", 
+                        dto.getName(), dto.getCategory(), dto.getStartLine(), storageKey);
+                }
             } else {
                 // New symbol - create and save
                 symbol = new Symbol();
